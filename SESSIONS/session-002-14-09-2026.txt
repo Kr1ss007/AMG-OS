@@ -77,6 +77,35 @@ WORK DONE
    - Verified all three fork deltas via scripts/delta.sh.
 
 DECISIONS MADE
+WORK DONE (CONTINUED - BACKEND SUBSYSTEM PRODUCTION ENGINEERING):
+- Verified host hardware against AMGOS spec:
+  13th Gen Intel Core i5-13420H (8 cores, 12 threads), 16GB DDR4, 512GB NVMe,
+  NVIDIA GeForce RTX 3050 Laptop GPU 6GB [10de:25ac] + Intel UHD Graphics [8086:a7a8],
+  Realtek Wi-Fi [10ec:b520], thermal zones 0-3 (/sys/class/thermal).
+- Implemented Pre-Configured Power Profiles in amgos-system/src/power/:
+  - Endurance: powersave governor, energy-performance-preference = "power"
+  - Balanced: default governor, energy-performance-preference = "balance_performance"
+  - MAX: performance governor, energy-performance-preference = "performance", full boost.
+- Implemented Hardware Detection in amgos-system/src/hardware/:
+  Reads real topology, cores, threads, memory, DRM connectors, 144Hz check, and CPU thermal zones.
+- Implemented Network Credential Vault in amgos-system/src/network/:
+  Discovers physical interfaces (wlo1, eno1), reads live IP from /proc/net/fib_trie, isolates credentials in Process 1 memory.
+- Implemented AVM & F3 Piano Boot Chime Synthesis in amgos-system/src/avm/:
+  Synthesizes 48kHz 16-bit stereo PCM audio (1500ms duration, 174.614 Hz fundamental,
+  harmonics F3/F4/C5/F5/A5, hammer envelope, chamber reverb). Enforces stream priority ducking.
+- Implemented Linux inotify File Watching in filer/core/src/fs/:
+  libc inotify syscalls (IN_CREATE, IN_DELETE, IN_MODIFY, IN_MOVED_FROM, IN_MOVED_TO) with non-blocking event polling.
+- Implemented Pathfinder Inverted Search Engine in filer/core/src/pathfinder/:
+  Tokenized query resolution, system .desktop parser, power settings, installable web catalog,
+  live file indexer, and symmetric removal on uninstall.
+- Implemented Package Inspector & AppLayerManager in filer/core/src/packages/:
+  Magic byte detection (.deb, .appimage, .snap), real SHA-256 stream calculation,
+  staged installation into isolated App Layer (/var/lib/amgos/apps), and symmetric uninstallation.
+- Implemented Bidirectional EventBus (e-bus) in amgos-protocol and amgos-system:
+  Added poll_requests to EventBusServer, DesktopRequest dispatch loop in amgos-system main daemon.
+- Created and passed end-to-end integration test (amgos-system/tests/backend_integration.rs).
+
+DECISIONS MADE
 1. Internal IPC named EventBus (e-bus), external D-Bus bridge named EventOutsiderBus (eo-bus).
 2. just configured as the workspace build driver via root Justfile.
 3. Session files standardized to session-NNN-DD-MM-YYYY.txt in SESSIONS/.
@@ -85,30 +114,36 @@ DECISIONS MADE
 5. Sourced WhiteSur as the official macOS-inspired icon pack and Apple Cursor (v2.0.1) as the cursor pack,
    satisfying the non-generated visual consistency requirement in AMGOS_INTERFACE_SHELL_v0.0.1.txt.
 6. Forked Ubuntu LTS as the infrastructure floor: Canonical HWE kernel + stripped base userland (removing snapd, cloud-init, GNOME, X11, and user-facing apt, while retaining hardware detection and firmware).
+7. Power management pre-configured with Endurance, Balanced, and MAX profiles.
+8. F3 piano boot chime synthesized via acoustic harmonic equations with exponential decay and chamber reverb.
+9. Linux inotify directly leveraged via libc for zero-overhead continuous file watching in Filer Core.
 
 WHAT WORKED
 - Hardware KVM acceleration and UEFI OVMF verified cleanly on the host CPU.
 - Rust 1.98.1 toolchain compiled the 11-member workspace without any linking or edition conflicts.
 - Newton-Raphson cubic-bezier solver verified monotonic progress across [0.0, 1.0].
-- e-bus Unix domain socket pub/sub round-trip unit test passed.
+- e-bus Unix domain socket pub/sub round-trip and bidirectional request/response unit tests passed.
 - QEMU headless test verified UEFI GOP firmware initialization under KVM.
 - Direct archive streaming for assets (fonts, cursors, WhiteSur, and fork snapshots) completed cleanly.
 - Canonical HWE kernel config and Ubuntu 24.04 LTS minimal rootfs extracted and stripped in FORKS/ubuntu/.
+- All 15 unit and integration tests across the workspace pass with 100% success.
+- End-to-end daemon request dispatch test verified Pathfinder search, MAX power profile switching, directory listing, Wi-Fi vault storage, and Astrophage diagnostic snapshots.
 
 WHAT DID NOT WORK
 - Initial bincode v3.0.0 download contained an upstream compile error; pinned to stable bincode v1.3.3.
 - AstrophageRecord initially derived Eq with an f64 field; corrected to PartialEq to satisfy Rust float equality rules.
 - Direct git clone of heavy icon repositories was severely throttled by upstream hosts; resolved by downloading tarball release archives.
+- Pathfinder search ranking initially applied installed bonus to non-matching documents; corrected to only boost items with positive query match scores.
 
 OPEN QUESTIONS
 - Zen Browser embed depth: shell embed vs GeckoView embed.
 
 ARTIFACTS
 - Cargo.toml (root workspace)
-- Justfile (workspace task runner)
+- Justfile (workspace task runner with cargo PATH export)
 - .gitignore
 - amgos-protocol/ (ebus/, eobus/, Cargo.toml, README.txt)
-- amgos-system/ (src/, Cargo.toml, README.txt)
+- amgos-system/ (src/, tests/backend_integration.rs, Cargo.toml, README.txt)
 - amgos-desktop/ (src/, Cargo.toml, README.txt)
 - filer/ (core/, shell/, protocol/, README.txt)
 - astrophage/ (core/, shell/, protocol/, README.txt)
@@ -122,7 +157,7 @@ ARTIFACTS
 - assets/icons/ (WhiteSur/)
 
 NEXT SESSION
-Proceed with Filer core filesystem inotify integration and Pathfinder query scoring optimizations.
+Proceed with amgos-desktop and COSMIC compositor integration, connecting MotionWave input gestures to e-bus and rendering the Top Global Menu Panel.
 ================================================================================
 END OF SESSION LOG
 Session 2 — September 14, 2026

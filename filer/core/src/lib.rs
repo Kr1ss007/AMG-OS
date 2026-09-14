@@ -10,6 +10,6 @@ pub mod packages;
 pub mod pathfinder;
 
 pub use downloads::DownloadManager;
-pub use fs::FileSystemIndexer;
-pub use packages::PackageInspector;
+pub use fs::{FileSystemIndexer, InotifyWatcher};
+pub use packages::{AppLayerManager, PackageInspector};
 pub use pathfinder::{PathfinderIndex, SearchDocument};

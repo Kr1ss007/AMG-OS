@@ -1,6 +1,8 @@
 # AMGOS Root Justfile
 # Unified build, test, and virtualization driver
 
+export PATH := env_var('HOME') + "/.cargo/bin:" + env_var('PATH')
+
 # Default recipe: check entire workspace
 default: check
 

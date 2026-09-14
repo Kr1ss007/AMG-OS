@@ -17,6 +17,14 @@ pub enum PowerState {
     Reboot,
 }
 
+/// Pre-configured system power profile (Endurance, Balanced, MAX)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PowerProfile {
+    Endurance,
+    Balanced,
+    Max,
+}
+
 /// Installation progress stage
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstallStage {
@@ -66,6 +74,16 @@ pub enum PathfinderCategory {
     File,
     Setting,
     InstallableWeb,
+}
+
+/// File entry for directory listings over e-bus
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProtocolFileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size_bytes: u64,
+    pub modified_timestamp_secs: u64,
 }
 
 /// Package inspection report
@@ -123,6 +141,12 @@ pub enum SystemEvent {
         initiated_by_system: bool,
     },
 
+    /// Emitted when power profile is switched (Endurance, Balanced, MAX)
+    PowerProfileChanged {
+        profile: PowerProfile,
+        active_governor: String,
+    },
+
     /// Emitted when display hardware configuration is changed
     DisplayConfigChanged {
         connector: String,
@@ -135,10 +159,22 @@ pub enum SystemEvent {
     /// Continuous rolling diagnostic events from Process 1
     AstrophageLog(AstrophageRecord),
 
+    /// Snapshot response of rolling Astrophage buffer
+    AstrophageBufferSnapshot {
+        entries: Vec<AstrophageRecord>,
+    },
+
     /// Response to a Pathfinder search query
     PathfinderResults {
         query_id: u64,
         results: Vec<PathfinderItem>,
+    },
+
+    /// Directory listing response
+    DirectoryListing {
+        request_id: u64,
+        path: String,
+        entries: Vec<ProtocolFileEntry>,
     },
 
     /// Inspection report for an installable package
@@ -180,6 +216,12 @@ pub enum DesktopRequest {
         max_results: usize,
     },
 
+    /// Request file directory listing
+    ListDirectory {
+        request_id: u64,
+        path: String,
+    },
+
     /// Inspect a package file located at a path
     InspectPackage { package_path: String },
 
@@ -194,6 +236,9 @@ pub enum DesktopRequest {
 
     /// Request a system power transition (sleep, shutdown, reboot)
     RequestPowerState(PowerState),
+
+    /// Switch active power profile (Endurance, Balanced, MAX)
+    SetPowerProfile(PowerProfile),
 
     /// Submit network credentials securely to Process 1 vault
     ConnectWifi { ssid: String, passphrase: String },

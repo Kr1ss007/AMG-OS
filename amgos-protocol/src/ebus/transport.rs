@@ -94,7 +94,7 @@ impl EventBusServer {
         loop {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    let _ = stream.set_nonblocking(false);
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(10)));
                     let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
                     if let Ok(mut subs) = self.subscribers.lock() {
                         subs.push(stream);
@@ -106,6 +106,52 @@ impl EventBusServer {
             }
         }
         Ok(new_count)
+    }
+
+    /// Poll connected subscribers for any incoming DesktopRequests from Process 2
+    pub fn poll_requests(&self) -> Vec<(u32, DesktopRequest)> {
+        let mut requests = Vec::new();
+        let mut subs = match self.subscribers.lock() {
+            Ok(s) => s,
+            Err(_) => return requests,
+        };
+
+        let mut retained = Vec::with_capacity(subs.len());
+        for mut stream in subs.drain(..) {
+            match read_frame_header(&mut stream) {
+                Ok(header) => {
+                    match read_frame_payload::<_, DesktopRequest>(&mut stream, &header) {
+                        Ok(req) => {
+                            requests.push((header.message_id, req));
+                            retained.push(stream);
+                        }
+                        Err(_) => {
+                            // Malformed payload, retain stream if connected
+                            retained.push(stream);
+                        }
+                    }
+                }
+                Err(FrameError::Io(ref e))
+                    if e.contains("Resource temporarily unavailable")
+                        || e.contains("WouldBlock")
+                        || e.contains("timed out") =>
+                {
+                    // No data pending on this stream right now; retain
+                    retained.push(stream);
+                }
+                Err(FrameError::Io(ref e))
+                    if e.contains("failed to fill whole buffer") =>
+                {
+                    // Client disconnected cleanly (EOF)
+                }
+                Err(_) => {
+                    // Broken pipe or unrecoverable error, drop connection
+                }
+            }
+        }
+
+        *subs = retained;
+        requests
     }
 
     /// Publish a SystemEvent to all connected subscribers in Process 2
@@ -178,5 +224,39 @@ mod tests {
 
         let received = client.read_event().expect("Read event failed");
         assert_eq!(event, received);
+    }
+
+    #[test]
+    fn test_ebus_bidirectional_request_response() {
+        let socket_path = "/tmp/amgos_ebus_test_bidirectional.sock";
+        let server = EventBusServer::bind(socket_path).expect("Server bind failed");
+        let client = EventBusClient::connect(socket_path).expect("Client connect failed");
+
+        let _ = server.poll_connections().expect("Poll failed");
+
+        // Client sends request
+        let req = DesktopRequest::SearchPathfinder {
+            query_id: 42,
+            query: "filer".to_string(),
+            max_results: 5,
+        };
+        client.send_request(&req).expect("Failed to send request");
+
+        // Server polls requests
+        let received_requests = server.poll_requests();
+        assert_eq!(received_requests.len(), 1);
+        let (_, received_req) = &received_requests[0];
+        assert_eq!(received_req, &req);
+
+        // Server replies with SystemEvent
+        let resp = SystemEvent::PathfinderResults {
+            query_id: 42,
+            results: Vec::new(),
+        };
+        server.publish_event(&resp).expect("Failed to publish response");
+
+        // Client reads response
+        let received_event = client.read_event().expect("Client failed to read response");
+        assert_eq!(received_event, resp);
     }
 }

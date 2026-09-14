@@ -12,6 +12,6 @@ pub use frame::{
 };
 pub use messages::{
     AstrophageLevel, AstrophageRecord, DesktopRequest, InspectionReport, InstallStage,
-    PathfinderCategory, PathfinderItem, PowerState, SystemEvent,
+    PathfinderCategory, PathfinderItem, PowerProfile, PowerState, ProtocolFileEntry, SystemEvent,
 };
 pub use transport::{EventBusClient, EventBusServer, DEFAULT_EBUS_SOCKET_PATH};
