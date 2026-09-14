@@ -1,0 +1,567 @@
+================================================================================
+AMGOS — A MULTI-PURPOSE GENERAL OPERATING SYSTEM
+SPECIFICATION DOCUMENT
+Version: 0.0.1 Pre-Production Alpha
+Status: Internal. Not for distribution.
+================================================================================
+
+
+SECTION 1. IDENTITY
+--------------------------------------------------------------------------------
+
+Name:           AMGOS — A Multi-Purpose General Operating System
+Version:        0.0.1 (Pre-Production Alpha)
+Codename:       Upstream Color
+                All releases from v0.0.1 and upward carry this codename
+                until a new codename is designated for a future major version.
+Classification: Stable-channel platform OS. Not a Linux distribution.
+                Not a desktop environment. An operating system.
+Target user:    Anyone who sits down and uses a computer. No technical
+                knowledge required or assumed.
+Core promise:   Set it up once. It works after that. No troubleshooting.
+
+
+SECTION 2. BASE LAYER
+--------------------------------------------------------------------------------
+
+2.1 Kernel
+    Source:     Ubuntu LTS kernel with Canonical HWE patch set
+    Language:   C (kernel only, untouched, upstream)
+    Policy:     No custom kernel patches except those required for
+                framebuffer continuity and boot silence.
+    Cadence:    Ubuntu LTS cycle (two-year base, HWE stack for hardware
+                enablement between major versions)
+
+2.2 Base Userland
+    Source:     Ubuntu LTS base, stripped
+    Removed:    snapd, cloud-init, GNOME and all GNOME dependencies,
+                apt as a user-facing tool, all server tooling,
+                all X11 and X11 legacy components
+    Retained:   Hardware detection layer, driver and firmware
+                infrastructure, .deb package format support for
+                the installer backend only
+
+2.3 Language Policy
+    Above the kernel:   Rust, exclusively
+    Inside the kernel:  C, as upstream provides
+    Prohibited:         C++ in any AMGOS-authored component,
+                        Python in any system path or boot sequence,
+                        shell scripts in the boot sequence,
+                        X11 or X11 legacy in any layer
+
+
+SECTION 3. PROCESS ARCHITECTURE
+--------------------------------------------------------------------------------
+
+3.1 Overview
+    AMGOS runs two top-level process sessions. This is a hard architectural
+    boundary, not a convention.
+
+3.2 Process 1 — System Session
+    Owns:
+        - Hardware (input devices, display hardware, audio hardware)
+        - Network (wifi credentials, connection state)
+        - Power management (sleep, wake, hibernate, shutdown)
+        - IPC broker (internal pub/sub message bus)
+        - File system indexing and watching
+        - Filer backend (package download, inspection, install,
+          uninstall, Pathfinder search index)
+        - Download manager
+        - Audio-Video Manager (AVM) — all audio and video routing,
+          boot chime sequencing, stream priority and ducking
+        - Astrophage event logger — continuous rolling hardware
+          and system event buffer for diagnostic reporting
+        - Security boundaries and permission state
+
+    Does not own:
+        - Any rendered UI
+        - Any user-facing surface
+        - The Wayland compositor
+
+    Crash behavior:
+        Process 1 crashing is a system fault. It triggers a controlled
+        shutdown. It does not trigger a kernel panic unless the kernel
+        itself is at fault.
+
+3.3 Process 2 — Desktop Session
+    Owns:
+        - Wayland compositor (forked cosmic-comp, Smithay-based)
+        - All rendered UI surfaces
+        - Animation engine
+        - Lockscreen
+        - Shutdown, restart, hibernate, and log-off UI
+        - Global Menu bar
+        - Setup wizard (on first boot)
+        - Filer shell (file browser, Pathfinder search bar,
+          app installer UI, Zen Browser embed, uninstall surface)
+        - All app windows
+
+    Does not own:
+        - Any hardware directly
+        - Network credentials
+        - File system directly (requests via IPC to Process 1)
+
+    Crash behavior:
+        Process 2 crashing is a desktop fault. Process 1 detects it,
+        restarts the desktop session. The user sees the lockscreen.
+        No reboot required. No data loss.
+
+3.4 IPC Architecture
+    Internal (Process 1 to Process 2):
+        Protocol:   Custom pub/sub over Unix domain sockets
+        Language:   Rust, both sides
+        Format:     Versioned binary message types defined in a shared
+                    protocol crate
+        Policy:     Process 2 subscribes. Process 1 publishes.
+                    Process 2 never writes directly to hardware or
+                    filesystem. It sends requests. Process 1 acts.
+
+    External (OS to third-party apps):
+        Protocol:   D-Bus
+        Policy:     All third-party app integration goes through D-Bus.
+                    No app gets direct access to internal pub/sub.
+                    D-Bus interfaces are versioned and documented.
+
+
+SECTION 4. BOOT SEQUENCE
+--------------------------------------------------------------------------------
+
+4.1 Requirements
+    - Zero visible kernel messages
+    - Zero TTY output visible to user
+    - Zero cursor blink at any point
+    - Zero Plymouth or any third-party boot splash
+    - Framebuffer continuity: display never goes dark between
+      bootloader handoff and compositor ready state
+    - Boot chime fires exactly once, when audio hardware is confirmed
+      ready by AVM via Process 1, synchronized with the AMG-OS wordmark
+      appearing on screen. The chime is an original composition: F3,
+      piano, C Major, with depth and reverb, 1-2 seconds total.
+      It is an easter egg — the first note of Lenka's Everything at Once,
+      legally original, owned by the project.
+    - Network connection established by Process 1 before desktop
+      session presents to user
+    - Loading indicator (macOS-style progress bar aesthetic) lives
+      inside the compositor's startup phase, not in any external tool
+
+4.2 Sequence
+    1.  UEFI firmware initializes. GOP framebuffer active.
+    2.  Bootloader (systemd-boot or custom UEFI stub) loads kernel.
+        Kernel params include: quiet, rd.systemd.show_status=false,
+        vt.global_cursor_default=0, console=null (or redirected).
+    3.  Process 1 starts. No output to any TTY.
+    4.  Process 1 initializes hardware, audio, network.
+    5.  Process 1 connects to known wifi network.
+    6.  Process 1 signals compositor readiness.
+    7.  Process 2 starts. Compositor takes over GOP framebuffer
+        without blanking.
+    8.  Boot chime fires (audio hardware confirmed by Process 1).
+    9.  Loading indicator displays inside compositor.
+    10. Desktop session ready. Lockscreen presented.
+    11. User authenticates. Desktop renders.
+
+4.3 First Boot
+    Steps 1–7 identical.
+    Step 8: Setup wizard launches inside Process 2 instead of lockscreen.
+    Wizard completes. Configuration written to Process 1.
+    Desktop renders. Normal boot sequence applies from this point forward.
+
+
+SECTION 5. SETUP WIZARD
+--------------------------------------------------------------------------------
+
+5.1 Purpose
+    The setup wizard is AMGOS's one-time configuration session.
+    It runs on first boot, before the user ever sees the desktop.
+    Every question it asks is a question AMGOS commits to never
+    asking again at runtime.
+
+5.2 Visual Standard
+    Same compositor. Same animation system. Same cubic-bezier timing.
+    Same typography. The wizard is not a separate product. It is the
+    first screen of AMGOS.
+
+5.3 Screens (in order)
+    1.  Language and region (locale, timezone, keyboard layout)
+    2.  Network (wifi selection, password entry, connection confirmed)
+    3.  User account (name, avatar, password or biometric)
+    4.  Privacy and telemetry (explicit, honest, one screen)
+    5.  Display and accessibility (scaling, contrast, text size,
+        pointer speed, touchpad sensitivity)
+    6.  Migration (optional — import from backup or another machine)
+    7.  Done (transition animation directly into desktop, no reboot)
+
+5.4 Rules
+    - One screen, one question. No screen asks two things.
+    - Network is confirmed connected before the wizard advances
+      past screen 2.
+    - After wizard completion, wifi credentials live in Process 1.
+      The desktop session never holds them.
+    - Configuration output is a signed state file read by Process 1.
+      It is not editable by the user directly. Changes go through
+      the Settings surface, which writes a new signed state.
+
+
+SECTION 6. DISPLAY AND RENDERING
+--------------------------------------------------------------------------------
+
+6.1 Display Server
+    Protocol:   Wayland, exclusively
+    X11:        Not installed. Not supported. No XWayland.
+    Compositor: Forked cosmic-comp (System76 COSMIC), Smithay-based,
+                rewritten for AMGOS's two-process architecture
+
+6.2 Animation System
+    Standard:   cubic-bezier timing for all system animations
+    Scope:      Every system transition — screen lock, app open,
+                app close, notification, workspace switch, shutdown,
+                boot loading indicator — uses this system
+    Rule:       No toolkit or app decides its own animation timing
+                for system-level transitions. The compositor owns
+                the clock.
+
+6.3 Global Menu
+    Native apps:    Implement AMGOS's D-Bus menu protocol directly.
+                    Menu renders in the top bar.
+    Foreign apps:   GTK, Qt, Electron apps talk to the D-Bus menu
+                    bridge. Menu renders in the top bar.
+    Fallback:       Apps that implement neither get no top bar menu.
+                    Their menus remain in-window.
+
+6.4 Touchpad
+    Gesture handling lives at the compositor level, not in apps.
+    Apps receive gesture events only if the compositor routes them.
+    Touchpad configuration is set in the setup wizard and in Settings.
+    libinput configuration is owned by Process 1.
+
+
+SECTION 7. FILER AND PATHFINDER
+--------------------------------------------------------------------------------
+
+7.1 Identity
+    Filer is AMG-OS's primary and only always-running application.
+    It is the user's complete relationship with the system:
+        - File navigation and management
+        - Pathfinder — the search bar that is the entry point to
+          everything: files, apps, settings, web, installs
+        - Application discovery, inspection, installation, uninstall
+        - Web browsing via embedded Zen Browser
+
+    Filer does not quit. It hides. Like Finder on macOS.
+    It is the first app built and the most hardened app in the system.
+    It is the proof of the AMG-OS promise.
+
+7.2 Pathfinder
+    Pathfinder is not a separate app or a separate component.
+    Pathfinder is Filer's search bar.
+
+    The user types. Pathfinder resolves intent:
+        File name           Opens or shows the file
+        App name            Launches it if installed. Shows it as
+                            an installable result if not.
+        Search term         Files, apps, settings, web results —
+                            unified, in one result set
+        App to install      Opens the app's page in the embedded
+                            Zen Browser, inside Filer, with the
+                            Install button on the same screen
+
+    Install and uninstall are symmetric:
+        The Install button becomes an Uninstall button for apps
+        already on the system. Same surface. Same gesture.
+        Opposite action.
+        Right-click on any installed app shows the Uninstall option.
+        One confirmation. Gone. No residual state. No orphaned
+        libraries. The system after uninstall is identical to the
+        system before install.
+
+7.3 Process Split
+    Backend (Process 1 — Filer core):
+        - File system indexer and watcher (inotify, Rust)
+        - Pathfinder search index (maintained continuously)
+        - App catalog (installed apps, available packages)
+        - Package downloader and inspector
+        - Install and uninstall operations
+        - IPC publisher to Filer shell
+
+    Frontend (Process 2 — Filer shell):
+        - All visual surfaces
+        - Pathfinder search bar input and results
+        - File browser panels
+        - App installer and uninstaller UI
+        - Permission and inspection report display
+        - Zen Browser embed
+        - IPC subscriber from Filer core
+
+7.4 App Installation and Uninstall Flow
+    INSTALL:
+    User types in Pathfinder.
+    Pathfinder shows the app as an installable result.
+    Filer opens the app's page in the embedded Zen Browser.
+    User initiates download.
+    Process 1 downloads package to isolated staging area.
+    Process 1 inspects: manifest, signatures, permissions,
+    dependencies.
+    Process 1 publishes inspection report to Filer shell.
+    Shell renders report alongside the app page.
+    User confirms. Process 1 installs into the app layer.
+    App appears in Pathfinder results immediately.
+
+    UNINSTALL:
+    User right-clicks any installed app, anywhere in Filer,
+    or finds it via Pathfinder and clicks Uninstall.
+    One confirmation dialog (Yes / No).
+    Process 1 removes the app and its isolated dependencies.
+    No residual state. No orphaned libraries.
+    App disappears from Pathfinder results immediately.
+
+7.5 Supported Package Formats
+    .deb, Flatpak, AppImage, Snap
+    All formats inspected before installation.
+    All install into the app layer, never into the base image.
+    All uninstall cleanly, completely.
+
+7.6 Codebase Structure
+    filer/
+        core/       (Process 1 — no UI dependencies)
+            fs/         inotify watcher, indexer
+            pathfinder/ search index and query resolution
+            packages/   format inspection for all supported types
+            downloads/  async download manager
+            ipc/        pub/sub publisher
+        shell/      (Process 2 — all UI)
+            pathfinder/ search bar input and results UI
+            browser/    Zen/Gecko embed wrapper
+            files/      file browser panels
+            installer/  install/uninstall UI, permission display
+            ipc/        pub/sub subscriber
+        protocol/   (shared — the contract between core and shell)
+
+
+SECTION 8. ZEN BROWSER INTEGRATION
+--------------------------------------------------------------------------------
+
+8.1 Status
+    Zen Browser is a first-class native citizen of AMGOS.
+    It is also the embedded browser engine inside the primary app.
+    It is a forked dependency, not a third-party application.
+
+8.2 Engine
+    Zen Browser is built on Gecko (Mozilla Firefox's engine).
+    AMGOS does not modify Gecko.
+    AMGOS's Zen fork diverges only above the engine layer.
+
+8.3 First-Class Integration
+    Global Menu:        Zen implements AMGOS's D-Bus menu protocol.
+                        Menu bar renders in the AMGOS top bar.
+    Gesture handling:   Four-finger swipe is a compositor-level gesture
+                        routed to Zen as a tab-switch event.
+    Sleep/wake:         Zen subscribes to Process 1's sleep event.
+                        Media pauses. Background tabs suspend.
+    Download handoff:   Clicking an installable file in Zen sends an
+                        install request to Process 1's package backend.
+                        No save dialog. No file manager step.
+    Animation timing:   Zen's UI animations use AMGOS's cubic-bezier
+                        timing constants. It does not feel foreign.
+
+8.4 Fork Delta Policy
+    The Zen fork delta must stay small.
+    Every divergence from upstream Zen is documented.
+    Gecko security updates are pulled on an emergency cadence.
+    No Gecko security update waits for a scheduled release.
+    D-Bus menu and compositor gesture work are contributed upstream.
+
+
+SECTION 9. FIRST-CLASS NATIVE APPS
+--------------------------------------------------------------------------------
+
+9.1 App Registry
+
+    AMG-OS ships with the following first-class native citizen apps.
+    All are built in Rust. All implement the AMG-OS D-Bus menu protocol.
+    All receive gesture routing from MotionWave. All use the Animation
+    and Interface Engine's cubic-bezier timing system.
+
+    Filer (with Pathfinder)     Primary app. Always running. Never quits.
+                                File manager, search, installer, uninstaller,
+                                embedded browser. See Section 7.
+
+    Zen Browser                 First-class native browser. Forked.
+                                See Section 8.
+
+    Terminow                    GPU-accelerated terminal emulator.
+                                Polished UI. JetBrains Mono font.
+                                First-class Global Menu and gesture support.
+
+    Settings                    The single configuration surface.
+                                All user-facing OS configuration lives here.
+                                Covers display, sound, network, touchpad,
+                                keyboard, accessibility, accounts, privacy,
+                                updates (OTA), and appearance.
+                                Writes to Process 1's signed configuration
+                                state. Never writes files directly.
+
+    Astrophage                  Hardware and system diagnostic app.
+                                Reads the continuous event buffer maintained
+                                by Process 1's Astrophage logger.
+                                Collects hardware identity, system state,
+                                health indicators, and event logs.
+                                Packages everything into a pre-formatted
+                                GitHub issue on the AMG-OS repository.
+                                The user adds one plain English description.
+                                Astrophage handles everything else.
+                                Never collects user files, browser history,
+                                or personal data. Hardware and system state
+                                only. The user sees exactly what will be
+                                sent before it goes anywhere.
+
+9.2 Astrophage — Technical Detail
+
+    Process split:
+        Core (Process 1):
+            Continuous rolling event buffer. Always running.
+            Captures: hardware identity, CPU/GPU temperatures,
+            thermal throttle events, memory errors, NVMe health,
+            Process 1 and Process 2 error events, AVM errors,
+            MotionWave errors, compositor frame drops, crash reports.
+            Buffer persists across desktop session restarts.
+            Buffer is available immediately when Astrophage opens —
+            the problem that happened at 2am is still in the buffer
+            at 9am.
+
+        Shell (Process 2):
+            Report builder UI.
+            GitHub issue formatter and submitter.
+            Plain English problem description input.
+            Pre-send review screen: user sees exactly what is sent.
+
+    Codebase structure:
+        astrophage/
+            core/       Process 1 event logger and hardware reader
+            shell/      Process 2 UI — report builder, GitHub integration
+            protocol/   Shared types between core and shell
+
+9.3 Terminow — Technical Detail
+
+    GPU-accelerated text rendering. Text does not touch the CPU
+    render path. Smooth at all font sizes and scroll speeds.
+    Font: JetBrains Mono (bundled in base image).
+    Behaves as a native AMG-OS app in every respect.
+    Global Menu in the top panel.
+    Gesture support via MotionWave.
+    Sleep/wake awareness via AVM pub/sub subscription.
+
+
+SECTION 11. RELEASE AND UPDATE MODEL
+--------------------------------------------------------------------------------
+
+9.1 Release Model
+    AMGOS ships complete, signed images.
+    There is no package manager visible to the user.
+    There is no partial update state. The system is always
+    in a known, tested, signed configuration.
+
+9.2 Versioning
+    AMGOS 1.0       Initial stable release
+    AMGOS 1.0.1     Security patch or bug fix. No feature change.
+    AMGOS 1.1       Stable feature release. Full image.
+    AMGOS 2.0       Major version. May require migration wizard.
+
+    Major version changes may break the app D-Bus protocol.
+    Minor version changes do not.
+    Point releases change nothing visible to users or apps.
+
+9.3 Codenames
+    Version 0.0.1 and all releases upward carry the codename:
+    Upstream Color.
+
+    A new codename is designated only at a new major version.
+    The codename is not exposed to the user in normal operation.
+    It appears in developer documentation, release notes, and
+    internal references only.
+
+9.4 Update Mechanism — OTA via Settings
+    All AMGOS updates — security patches, bug fixes, and new
+    feature releases — deliver over the air (OTA) through the
+    Settings app. The user does not visit a website. The user
+    does not download an ISO. The user does not use a terminal.
+
+    The update surface in Settings shows:
+        - Current version and codename
+        - Whether an update is available
+        - What the update contains (plain English, not a changelog)
+        - Size of the update
+        - One button: Install Update
+
+    Update types and how they behave:
+
+    SECURITY PATCH / BUG FIX (point release, e.g. 1.0.1):
+        Available immediately after the user opens Settings.
+        Settings notifies the user via the notification system.
+        Download happens in the background automatically.
+        User installs when ready. One tap. No configuration.
+        System reboots into the updated image via A/B partition.
+        The previous image remains on the standby partition
+        as a fallback if the new image fails to boot.
+
+    FEATURE UPDATE (minor release, e.g. 1.1):
+        Notified via Settings and the notification system.
+        Download happens in the background automatically.
+        User installs when ready. One tap. No configuration.
+        Same A/B partition mechanism as a point release.
+        Feature updates are never forced. The user chooses when.
+
+    MAJOR VERSION (e.g. 2.0):
+        Notified via Settings. Not downloaded automatically.
+        User initiates download explicitly.
+        A migration wizard runs on first boot after the update
+        if configuration changes are required.
+        Major versions are never silent. The user is always
+        informed that this is a significant change.
+
+    Rules that apply to all update types:
+        The system is never in a partial update state.
+        An interrupted update does not corrupt the running system.
+        The running image is untouched until the new image
+        is confirmed bootable.
+        Security patches have a 72-hour maximum delivery window
+        from the time the vulnerability is confirmed.
+
+9.5 A/B Partition Model
+    Two system partitions: active and standby.
+    Updates write to the standby partition.
+    On next boot, standby becomes active.
+    If the new image fails to boot, the previous image restores.
+    The user never sees a partial update state.
+    The user never manually manages partitions.
+
+9.6 App Layer
+    Apps install into a separate layer, not the base image.
+    Base image is read-only and immutable.
+    App layer updates independently from the OS image.
+    An OS update never breaks installed apps.
+
+9.7 Hardware Compatibility
+    AMGOS maintains a curated hardware compatibility list.
+    Hardware not on the list is not supported.
+    No obsolete hardware support.
+    This list is the primary mechanism for the "it works" promise.
+
+
+SECTION 12. IMAGE SPECIFICATION
+--------------------------------------------------------------------------------
+
+Size:           9–11 GB
+Contents:       Complete OS image including all dependencies,
+                libraries, the Zen Browser fork, the primary app,
+                all system surfaces, all fonts, all system assets
+Format:         Signed, verified ISO
+Base:           Immutable, read-only
+App layer:      Separate, writable partition
+User data:      Separate, encrypted partition
+Updates:        Image delta or full image swap via A/B partition
+
+
+================================================================================
+END OF SPECIFICATION DOCUMENT
+AMGOS v0.0.1 Pre-Production Alpha
+================================================================================

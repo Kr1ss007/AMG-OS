@@ -1,0 +1,253 @@
+================================================================================
+AMGOS — A MULTI-PURPOSE GENERAL OPERATING SYSTEM
+SESSION LOG
+================================================================================
+
+DATE AND SESSION NUMBER
+Date:           September 14, 2026
+Session:        1 of 1 (this day)
+Participants:   Project lead + AI agent (Claude, Sonnet 4.6)
+Type:           Foundation session — architecture, vision, documentation
+
+
+ORIGIN
+Before this session: January 2023. The project lead was an active
+contributor to helloSystem's Matrix community. Testing on a Lenovo
+IdeaPad with 4GB RAM. Confirmed USB tethering with a Sony Android
+phone — the first person to test this. Probono (Simon Peter, the sole
+helloSystem developer) confirmed the test and noted the phone model
+had never been tested before. Other community members with Samsung
+phones (Exynos chips) could not replicate — different USB tethering
+protocol, different kernel module requirements, FreeBSD's network
+stack could not cover the gap.
+
+That experience — contributing to the closest existing attempt,
+living with its limits, understanding exactly why it fell short —
+is the direct origin of AMG-OS. helloSystem showed what the
+destination looks like from the outside. FreeBSD's network and
+hardware support gaps showed why it could never get there from
+that foundation. Ubuntu LTS is the answer to that specific problem.
+
+
+GOAL
+Establish the complete architectural, philosophical, and operational
+foundation for AMG-OS v0.0.1 Pre-Production Alpha (codename:
+Upstream Color). Produce all foundational documents. Define every
+major system component, named engine, and first-class app.
+
+
+WORK DONE
+
+Architecture defined:
+    Two-process model — Process 1 (System Session) and
+    Process 2 (Desktop Session) with a hard IPC boundary.
+    Internal pub/sub over Unix domain sockets.
+    External D-Bus for third-party apps.
+    Pure Wayland. No X11. No XWayland.
+    Rust above the kernel. C inside it.
+
+Named engines defined:
+    Animation and Interface Engine — owns all visual rendering,
+    all system animations, all shell components, all system screens.
+    MotionWave — owns all touchpad and keyboard input, gesture
+    recognition at the compositor level, input routing.
+    Audio-Video Manager (AVM) — owns all audio and video stream
+    routing, boot chime sequencing, stream priority and ducking.
+    Built on PipeWire and WirePlumber. Chime sequencer is the
+    only custom Rust component.
+
+Shell components defined:
+    Top Global Menu Panel — full width, fixed, never hides.
+    Space orange perfect rectangle at top left. No logo. No wordmark.
+    Smart Dock — auto-hide/show based on window behavior.
+    Pilot Control — Mission Control adjacent. Left sidebar for
+    virtual desktop grouping. Center for app thumbnails. Drag
+    and drop between desktops. + icon creates new desktop.
+    Virtual desktop transitions — smooth, directional, cubic-bezier.
+    Tiling window management — Command + Arrow key.
+
+Window chrome defined:
+    Traffic lights: space orange (close), space white (minimize),
+    sky blue (maximize). Symbols hidden. Appear on hover for the
+    group simultaneously.
+    Pop-up confirmation: Yes (space orange, right), No (space white,
+    left). Consistent everywhere. No app overrides this.
+
+Typography defined:
+    Inter — Main / Display
+    Young Serif — Primary / Body
+    Panamera — Secondary
+    JetBrains Mono — CLI
+
+System screens defined:
+    Lockscreen — polished, full-screen, fade in/out.
+    Sleep animation — fade to black. No text. No icons.
+    Shutdown — "goodbye". Black background. Lowercase. Centered.
+    Restart — "i'll see you in a bit". Same treatment.
+
+First-class native apps defined:
+    Filer (with Pathfinder) — primary app, always running.
+    Pathfinder is Filer's search bar. Single entry point to files,
+    apps, settings, web, installs. Install and uninstall symmetric.
+    Right-click any installed app → Uninstall. No residual state.
+    Zen Browser — first-class native browser. Gecko-based. Forked.
+    Terminow — GPU-accelerated terminal. JetBrains Mono.
+    Settings — single configuration surface. OTA updates live here.
+    Astrophage — hardware and system diagnostic app. Continuous
+    event buffer in Process 1. Pre-formatted GitHub issue output.
+    User adds plain English description. Astrophage does the rest.
+
+Boot chime defined:
+    F3, piano, C Major. Original composition. Remade in Ableton
+    with depth and reverb. 1-2 seconds total. Fires on AVM
+    hardware-ready signal, synchronized with AMG-OS wordmark
+    appearing on screen. Easter egg: the first note of Lenka's
+    Everything at Once. Original composition, owned by the project.
+
+Forks decided:
+    Ubuntu LTS — kernel and hardware base
+    Zen Browser — Gecko-based browser, first-class integration
+    COSMIC (System76) — compositor snapshot, hard fork
+
+Minimum hardware spec defined:
+    Intel Core i5-13420H, Intel UHD iGPU (not Xe)
+    NVIDIA RTX 3050 6GB VRAM, discrete only, no PRIME/Optimus
+    16GB DDR4, 512GB NVMe PCIe Gen4 x4, 144Hz Full HD+
+    2020+ hardware only. Forward only. No legacy support.
+
+Release model defined:
+    Stable channel only. Complete signed images.
+    OTA via Settings app. Three update types:
+    point release (auto-download, one tap install),
+    feature update (auto-download, user installs when ready),
+    major version (user-initiated download, migration wizard).
+    A/B partition swap. No partial update state.
+    Codename: Upstream Color (v0.0.1 and upward).
+
+Documents produced:
+    AMGOS_SPEC_v0.0.1.txt
+    AMGOS_VISION_v0.0.1.txt
+    AMGOS_CONTRACT_v0.0.1.txt
+    AMGOS_AGENT_SKILL_v0.0.1.txt
+    AMGOS_OWNER_PREFS_v0.0.1.txt
+    AMGOS_GIT_STRUCTURE_v0.0.1.txt
+    AMGOS_DOCS_STRATEGY_v0.0.1.txt
+    AMGOS_INTERFACE_SHELL_v0.0.1.txt
+    AMGOS_HARDWARE_SPEC_v0.0.1.txt
+    SESSIONS/2026-09-14_1/session.txt (this file)
+
+
+DECISIONS MADE
+
+AMG-OS is a platform, not a distro.
+    Linux is infrastructure. Ubuntu is the floor. The product is
+    AMG-OS. The user never knows or needs to know what is underneath.
+
+Rust above the kernel, C inside it.
+    Non-negotiable. Every AMGOS-authored component above the kernel
+    handoff is Rust. No exceptions without explicit written approval.
+
+Two-process hard boundary.
+    Process 2 never touches hardware. Never holds credentials.
+    Never writes to the filesystem directly. The boundary is not
+    a convention. It is the architecture.
+
+Filer is built first.
+    Building Filer forces the IPC protocol to be real before anything
+    else depends on it. Every subsequent component inherits that
+    protocol. Filer is the proof of the promise.
+
+No PRIME. No Optimus. Discrete only.
+    The no-PRIME decision eliminates the entire class of framebuffer
+    handoff failures. Only laptops with a hardware MUX switch go on
+    the compatibility list. This is a filter, not a limitation.
+
+Boot chime is an original composition.
+    F3, C Major, piano, Ableton. Owned by the project. No licensing.
+    Easter egg for users who know Everything at Once.
+
+AVM, not "audio engine."
+    The name reflects the scope accurately. PipeWire and WirePlumber
+    do the hard work. AVM is the ownership boundary and routing policy
+    inside Process 1, plus the chime sequencer.
+
+Astrophage feeds the hardware compatibility list over time.
+    The list is a guarantee at time of testing. Astrophage is how
+    that guarantee stays accurate as hardware ages and firmware changes.
+
+Stylized name: AMG-OS.
+    For web and public-facing work. Not reflected in internal
+    documents yet. Project lead will introduce this to agents
+    when web work begins.
+
+Filer and Pathfinder naming is final internally.
+    All documents updated. Project lead will introduce these names
+    formally to agents in future sessions.
+
+
+WHAT WORKED
+    The two-process architecture resolved every ownership question
+    cleanly. Every time a component's ownership was ambiguous,
+    asking "which process owns this?" produced a clear answer.
+
+    The hardware compatibility list as the primary mechanism for
+    the "it works" promise is the correct framing. It converts an
+    aspiration into a testable, maintainable engineering artifact.
+
+    Naming AVM, MotionWave, and the Animation and Interface Engine
+    separately resolved the component ownership question for all
+    future agents and contributors. The ownership table in the
+    interface shell spec is the reference.
+
+    The Astrophage concept closes the feedback loop that every
+    other OS leaves open. The event buffer persisting in Process 1
+    means problems that resolve before the user wakes up are still
+    reportable.
+
+
+WHAT DID NOT WORK
+    The agent used "worth" constructions in a response summary
+    despite the project lead's explicit prohibition in the owner
+    preferences document. The document was written by the agent
+    in the same session. This was corrected. The prohibition is
+    now stated with greater emphasis in the owner preferences
+    document and the agent skill document.
+
+
+OPEN QUESTIONS
+    Icon pack and cursor pack: specific packs not yet selected.
+    Sourced from existing packs, not generated. Selection pending.
+
+    Zen Browser embed depth: shell embed vs GeckoView embed.
+    The spec describes first-class integration but the technical
+    depth of the embed (how deeply Gecko is integrated vs how much
+    of Zen's UI layer is used) needs a decision before Filer
+    development begins.
+
+    AMD GPU support: explicitly deferred to a future version.
+    No open questions for v0.0.1 scope.
+
+    Website and public-facing work: AMG-OS stylization, Filer
+    and Pathfinder names, full documentation site. Deferred.
+    Project lead will initiate this work separately.
+
+
+ARTIFACTS
+    All documents listed under WORK DONE above.
+    Stored in docs/ in the repository structure.
+    All .txt format. All versioned at v0.0.1.
+
+
+NEXT SESSION
+    Begin Filer architecture in detail. Resolve the Zen Browser
+    embed depth question. Define the Pathfinder query resolution
+    algorithm — how it ranks and categorizes results across files,
+    apps, settings, and web simultaneously. Define the IPC message
+    types in amgos-protocol/ that Filer core and Filer shell depend on.
+
+
+================================================================================
+END OF SESSION LOG
+Session 1 — September 14, 2026
+AMGOS v0.0.1 Pre-Production Alpha — Upstream Color
+================================================================================

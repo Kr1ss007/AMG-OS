@@ -1,0 +1,416 @@
+================================================================================
+AMGOS — A MULTI-PURPOSE GENERAL OPERATING SYSTEM
+GIT REPOSITORY STRUCTURE
+Version: 0.0.1 Pre-Production Alpha
+Status: Internal. Not for distribution.
+================================================================================
+
+
+SECTION 1. OVERVIEW
+--------------------------------------------------------------------------------
+
+The AMGOS repository is structured as a professional monorepo. Every
+component that AMGOS authors lives here. Forks live in subdirectories
+under FORKS/. Documentation lives alongside the code it documents.
+
+Three folders extend the standard professional structure for this
+project's working style: SESSIONS/, TEST-SUITE/, and CHANGELOG/.
+These are first-class folders, not afterthoughts. They are maintained
+with the same discipline as the code.
+
+
+SECTION 2. FULL TREE
+--------------------------------------------------------------------------------
+
+amgos/
+│
+├── .github/
+│   ├── workflows/          CI pipeline definitions
+│   └── CODEOWNERS          Ownership assignments per component
+│
+├── docs/
+│   ├── AMGOS_SPEC_v0.0.1.txt
+│   ├── AMGOS_VISION_v0.0.1.txt
+│   ├── AMGOS_CONTRACT_v0.0.1.txt
+│   ├── AMGOS_AGENT_SKILL_v0.0.1.txt
+│   ├── AMGOS_OWNER_PREFS_v0.0.1.txt
+│   └── AMGOS_GIT_STRUCTURE_v0.0.1.txt
+│
+├── amgos-system/           Process 1 — System Session (Rust)
+│   ├── src/
+│   │   ├── main.rs
+│   │   ├── supervisor/     Init and service supervisor
+│   │   ├── hardware/       Input, display hardware, audio routing
+│   │   ├── network/        Wifi credentials, connection management
+│   │   ├── power/          Sleep, wake, hibernate, shutdown
+│   │   ├── ipc/            Internal pub/sub broker
+│   │   ├── avm/            Audio-Video Manager — PipeWire, WirePlumber,
+│   │   │                   chime sequencer, stream priority
+│   │   ├── astrophage/     Continuous event logger and hardware reader
+│   │   └── permissions/    Permission state management
+│   ├── Cargo.toml
+│   └── README.txt
+│
+├── amgos-desktop/          Process 2 — Desktop Session (Rust)
+│   ├── src/
+│   │   ├── main.rs
+│   │   ├── compositor/     Forked cosmic-comp, Smithay-based
+│   │   ├── animations/     cubic-bezier timing system
+│   │   ├── topbar/         Global Menu bar
+│   │   ├── lockscreen/
+│   │   ├── wizard/         Setup wizard (first boot)
+│   │   ├── shutdown-ui/    Shutdown, restart, hibernate, log-off
+│   │   └── ipc/            Internal pub/sub subscriber
+│   ├── Cargo.toml
+│   └── README.txt
+│
+├── amgos-protocol/         Shared IPC message types (Rust)
+│   ├── src/
+│   │   ├── lib.rs
+│   │   ├── system/         Messages published by Process 1
+│   │   └── desktop/        Messages published by Process 2
+│   ├── Cargo.toml
+│   └── README.txt
+│
+├── filer/                      Primary App — Filer with Pathfinder (Rust)
+│   ├── core/               Process 1 backend — no UI dependencies
+│   │   ├── fs/             inotify watcher, indexer
+│   │   ├── pathfinder/     search index and query resolution
+│   │   ├── packages/       .deb/.flatpak/.appimage/.snap inspection
+│   │   ├── downloads/      Async download manager
+│   │   └── ipc/            pub/sub publisher
+│   ├── shell/              Process 2 frontend — all UI
+│   │   ├── pathfinder/     search bar input and results UI
+│   │   ├── browser/        Zen/Gecko embed wrapper
+│   │   ├── files/          File browser panels
+│   │   ├── installer/      Install/uninstall UI, permission display
+│   │   └── ipc/            pub/sub subscriber
+│   ├── protocol/           Shared message contract (core ↔ shell)
+│   ├── Cargo.toml
+│   └── README.txt
+│
+├── astrophage/                 Diagnostic App — Hardware and System Reporter (Rust)
+│   ├── core/               Process 1 event logger and hardware reader
+│   ├── shell/              Process 2 UI — report builder, GitHub integration
+│   ├── protocol/           Shared types between core and shell
+│   ├── Cargo.toml
+│   └── README.txt
+│
+├── terminow/                   Terminal Emulator — GPU Accelerated (Rust)
+│   ├── src/
+│   ├── Cargo.toml
+│   └── README.txt
+│
+├── settings/                   Settings App (Rust)
+│   ├── src/
+│   ├── Cargo.toml
+│   └── README.txt
+│
+├── FORKS/
+│   ├── zen/                Zen Browser fork (Gecko-based)
+│   ├── cosmic/             COSMIC compositor fork (Smithay-based)
+│   ├── zen-delta.txt       Every documented divergence from upstream Zen
+│   └── cosmic-delta.txt    Every documented divergence from upstream COSMIC
+│
+├── SESSIONS/
+│   │
+│   ├── README.txt          What sessions are, how to write them
+│   │
+│   └── YYYY-MM-DD_N/       One folder per working session
+│       ├── session.txt     The session diary (see Section 3)
+│       └── artifacts/      Any files produced in this session
+│           ├── *.rs
+│           ├── *.txt
+│           └── ...
+│
+├── TEST-SUITE/
+│   │
+│   ├── README.txt          What the test suite covers, how to run it
+│   │
+│   ├── boot/               Boot sequence tests
+│   │   ├── silence.txt     Expected: zero kernel output visible
+│   │   ├── framebuffer.txt Expected: no display blank during handoff
+│   │   ├── chime.txt       Expected: chime fires once, on audio ready
+│   │   └── results/        Test run results by date
+│   │
+│   ├── ipc/                IPC protocol tests
+│   │   ├── boundary.txt    Process 2 cannot access hardware directly
+│   │   ├── pubsub.txt      Message delivery, ordering, recovery
+│   │   └── results/
+│   │
+│   ├── compositor/         Compositor and display tests
+│   │   ├── wayland.txt     No X11 surface can be created
+│   │   ├── animations.txt  cubic-bezier timing verification
+│   │   ├── globalmenu.txt  Menu renders in top bar, native and foreign
+│   │   └── results/
+│   │
+│   ├── primary-app/        File manager / launcher / installer tests
+│   │   ├── search.txt      Index accuracy, result latency
+│   │   ├── install.txt     All four package formats, inspect + install
+│   │   ├── browser.txt     Zen embed renders, download handoff works
+│   │   └── results/
+│   │
+│   ├── hardware/           Hardware compatibility tests
+│   │   ├── protocol.txt    Full test protocol for HCL additions
+│   │   └── results/        Per-device test results
+│   │
+│   ├── wizard/             Setup wizard tests
+│   │   ├── flow.txt        All screens, all paths
+│   │   ├── state.txt       Configuration written correctly to Process 1
+│   │   └── results/
+│   │
+│   └── regression/         Regression tests against previous releases
+│       └── results/
+│
+├── CHANGELOG/
+│   │
+│   ├── README.txt          How changelog entries are written
+│   │
+│   ├── UNRELEASED.txt      Changes not yet in a release
+│   │
+│   └── v0.0.1/
+│       ├── release.txt     What shipped in this version
+│       ├── known-issues.txt    Known issues at release time
+│       └── decisions.txt   Decisions made during this release cycle
+│           (what worked, what did not, why things changed)
+│
+├── scripts/
+│   ├── build.sh            Full image build
+│   ├── test.sh             Run full test suite
+│   ├── sign.sh             Sign the output image
+│   └── delta.sh            Check fork delta files are current
+│
+├── Cargo.toml              Workspace root
+├── Cargo.lock
+├── LICENSE.txt
+├── README.txt
+└── CONTRIBUTING.txt
+
+
+SECTION 3. SESSIONS FOLDER
+--------------------------------------------------------------------------------
+
+3.1 Purpose
+
+SESSIONS/ is the project's working diary. Every session of work —
+human or agent — that produces a decision, a file, or a meaningful
+finding gets a session entry. It is not a formality. It is the record
+of how the project actually developed.
+
+If something was decided in a session and not written in the session
+file, it did not happen for the purpose of this project's history.
+
+3.2 Naming
+
+Each session gets a folder:
+
+    SESSIONS/YYYY-MM-DD_N/
+
+Where N is the session number for that day, starting at 1.
+If three sessions happen on the same day:
+
+    SESSIONS/2025-09-13_1/
+    SESSIONS/2025-09-13_2/
+    SESSIONS/2025-09-13_3/
+
+3.3 Session File Format
+
+Every session folder contains session.txt. Its structure:
+
+    DATE AND SESSION NUMBER
+    [date, session number, who participated: lead / agent / both]
+
+    GOAL
+    [What this session set out to accomplish. One paragraph.]
+
+    WORK DONE
+    [What was actually done. Specific. Name files, components,
+    decisions. Not a summary of intention — a record of action.]
+
+    DECISIONS MADE
+    [Every decision made in this session, with the reasoning.
+    If a decision was made and the reasoning was not recorded,
+    record it now. If the reasoning is unknown, say so.]
+
+    WHAT WORKED
+    [Specific things that functioned as intended.]
+
+    WHAT DID NOT WORK
+    [Specific things that failed, produced wrong output, or were
+    abandoned. Include why if known.]
+
+    OPEN QUESTIONS
+    [Questions raised in this session that were not resolved.
+    These carry forward to the next session.]
+
+    ARTIFACTS
+    [List every file produced or modified in this session,
+    with a one-line description of what it is.]
+
+    NEXT SESSION
+    [What the next session should address first.]
+
+3.4 Artifacts Subfolder
+
+Files produced in a session go into SESSIONS/YYYY-MM-DD_N/artifacts/.
+This is the working output of the session before it is merged into
+the main codebase or docs/. Once merged, the artifact copy remains
+as a historical record.
+
+
+SECTION 4. TEST-SUITE FOLDER
+--------------------------------------------------------------------------------
+
+4.1 Purpose
+
+TEST-SUITE/ contains two things: the test definitions (what is being
+tested and what the expected outcome is) and the test results (what
+actually happened when the test was run).
+
+Test definitions are .txt files written in plain English. They describe
+the condition being tested and the expected outcome. They are not code.
+They are the specification for what correct behavior looks like.
+
+Automated tests are separate — they live in the relevant source crate's
+tests/ directory. TEST-SUITE/ documents the full test protocol including
+tests that require human observation (visual tests, hardware tests,
+audio tests) that cannot be automated.
+
+4.2 Results
+
+Results go in the results/ subdirectory of each test category.
+Each results file is named by date and run number:
+
+    TEST-SUITE/boot/results/2025-09-13_1.txt
+
+Results files record:
+    - Date and run number
+    - System configuration tested (hardware, build commit)
+    - Each test: pass / fail / partial / not run
+    - For failures: what was observed, what was expected
+    - Overall assessment
+
+4.3 Regression
+
+TEST-SUITE/regression/ contains tests that verify the current build
+does not break behavior that worked in a previous release. Every
+confirmed bug that is fixed gets a regression test added. The test
+is named for the issue it guards against.
+
+
+SECTION 5. CHANGELOG FOLDER
+--------------------------------------------------------------------------------
+
+5.1 Purpose
+
+CHANGELOG/ is the project's external and internal release record.
+It is not a commit log. It is a curated, readable account of what
+changed, what was decided, and what was learned in each release cycle.
+
+It serves two audiences:
+    - Users and app developers who need to know what changed
+    - The project team who need to know why it changed
+
+5.2 UNRELEASED.txt
+
+UNRELEASED.txt is the running changelog for work not yet in a release.
+Every meaningful change gets an entry here as it is made. At release
+time, UNRELEASED.txt becomes the basis for the release changelog and
+is cleared for the next cycle.
+
+Entries in UNRELEASED.txt follow this format:
+
+    [COMPONENT] Brief description of what changed.
+    Reason: Why it changed.
+    Affects: Who or what is affected (users, app developers, agents).
+
+5.3 Release Folder Structure
+
+Each release version gets a folder under CHANGELOG/:
+
+    CHANGELOG/v0.0.1/
+        release.txt         Public-facing: what shipped, what changed
+        known-issues.txt    Known issues at release time, with workarounds
+        decisions.txt       Internal: what was decided, what worked,
+                            what did not, why things changed mid-cycle
+
+5.4 decisions.txt
+
+This is the internal record of the release cycle. It is a diary of
+the decisions made between the previous release and this one. It
+answers the question: if we had to rebuild this release from scratch,
+what would we need to know that is not in the code?
+
+It records things that did not ship, approaches that were tried and
+abandoned, and reasons why the final decisions were made over the
+alternatives.
+
+
+SECTION 6. COMMIT CONVENTIONS
+--------------------------------------------------------------------------------
+
+6.1 Message Format
+
+    [COMPONENT] Short description of what changed and why.
+
+    Extended body if needed. State the reason for the change.
+    State what problem it solves. Reference session entries or
+    test results if relevant.
+
+Components:
+    [SYSTEM]        amgos-system/ changes
+    [DESKTOP]       amgos-desktop/ changes
+    [PROTOCOL]      amgos-protocol/ changes
+    [FM]            file-manager/ changes
+    [ZEN]           FORKS/zen/ changes
+    [COSMIC]        FORKS/cosmic/ changes
+    [TEST]          TEST-SUITE/ changes
+    [DOCS]          docs/ changes
+    [SESSION]       SESSIONS/ additions
+    [CHANGELOG]     CHANGELOG/ changes
+    [BUILD]         scripts/ or CI changes
+    [SECURITY]      Security patches — always marked explicitly
+
+6.2 Rules
+
+Every commit is buildable. A commit that breaks the build is reverted.
+
+Every protocol change includes a documentation update in the same commit.
+
+Every fork delta change updates the corresponding delta file in the
+same commit.
+
+Security patches are tagged [SECURITY] in the commit message.
+They are never bundled with feature changes.
+
+6.3 Branch Model
+
+    main            Always stable. Always passes full test suite.
+    dev             Integration branch. Passes CI. May have known issues.
+    session/[date]  Per-session work branch. Merges to dev when done.
+    security/[id]   Security patches. Merges directly to main after review.
+
+
+SECTION 7. RULES FOR THIS STRUCTURE
+--------------------------------------------------------------------------------
+
+A session that produces work but no session.txt entry did not happen
+for the purpose of this project's record. Write the entry.
+
+A test that passes but has no result file proves nothing for the record.
+Write the result file.
+
+A decision made in conversation but not recorded in the session file,
+the vision document, or the changelog is not a project decision.
+Write it down.
+
+A fork delta that is not in zen-delta.txt or cosmic-delta.txt does not
+exist for the purpose of fork management. Document it.
+
+The structure is the discipline. The discipline is the promise.
+
+
+================================================================================
+END OF GIT REPOSITORY STRUCTURE DOCUMENT
+AMGOS v0.0.1 Pre-Production Alpha
+================================================================================

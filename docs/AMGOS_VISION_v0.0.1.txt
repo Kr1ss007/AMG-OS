@@ -1,0 +1,288 @@
+================================================================================
+AMGOS — A MULTI-PURPOSE GENERAL OPERATING SYSTEM
+DECISION, DIRECTIVE, AND VISION DOCUMENT
+Version: 0.0.1 Pre-Production Alpha
+Status: Internal. Not for distribution.
+================================================================================
+
+
+PART I. VISION
+--------------------------------------------------------------------------------
+
+AMGOS exists because the promise Linux never kept is still worth keeping.
+
+That promise is simple: a computer that works. Not a computer that works
+after you configure it. Not a computer that works if you know the right
+commands. A computer you sit down at and use. One that was ready before
+you arrived.
+
+Every operating system that runs on general hardware and is not made by
+Apple has broken this promise in some way. They break it at the boot
+screen. They break it at the network dialog. They break it when a
+dependency conflicts, when a package manager corrupts state, when a
+driver fails silently, when the compositor crashes and leaves the user
+staring at a TTY.
+
+AMGOS does not break this promise. That is the entire project.
+
+Everything else — the architecture, the language choices, the fork
+decisions, the release model, the setup wizard, the primary app — is
+in service of that promise. When a decision makes the promise harder
+to keep, the decision is wrong. When a decision makes the promise
+easier to keep, it is right.
+
+This document records the decisions made, the reasoning behind them,
+and the directives that follow from them.
+
+
+PART II. CORE DIRECTIVES
+--------------------------------------------------------------------------------
+
+DIRECTIVE 1: The Promise Is Structural, Not Aspirational
+
+The promise — set it up once, it works after that, no troubleshooting —
+is not a marketing statement. It is an architectural requirement.
+
+Every system component must be designed to uphold it:
+    - Immutable base image means the user cannot break the OS.
+    - Two-process separation means a desktop crash is not a system crash.
+    - Signed, complete images mean the system is never in a partial state.
+    - A curated hardware list means we never ship on hardware we cannot
+      guarantee.
+    - The setup wizard means we never ask the user a question at runtime
+      that we could have asked at setup.
+
+If a proposed feature or change increases the probability that a user
+will need to troubleshoot, it is rejected regardless of its other merits.
+
+
+DIRECTIVE 2: The Seams Do Not Show
+
+AMGOS is built on Linux, Ubuntu, COSMIC, and Zen Browser.
+The user never knows this.
+
+There are no Ubuntu logos. No GNOME remnants. No COSMIC settings panels.
+No Zen Browser chrome that conflicts with AMGOS chrome.
+
+Every surface the user touches is AMGOS. The forks are infrastructure.
+They are chosen carefully and then absorbed. The user experiences one
+coherent product.
+
+
+DIRECTIVE 3: Rust Above the Kernel, C Inside It
+
+This is not a preference. It is a policy.
+
+Every line of code AMGOS authors above the kernel handoff is Rust.
+C++ is not used. Python is not in the system path. Shell scripts are
+not in the boot sequence.
+
+The kernel is C because it must be. The rest of the system is Rust
+because correctness at compile time is part of the "it works" promise.
+Memory corruption, use-after-free, and data races in system code produce
+exactly the kind of failure the promise prohibits.
+
+
+DIRECTIVE 4: Stable Channel Only
+
+AMGOS does not ship a rolling release. It does not ship a testing channel.
+It does not ship a beta channel to general users.
+
+There is one channel: stable. A release on this channel is a complete,
+tested, signed image. It has passed every test. It works on every machine
+on the compatibility list.
+
+Early access programs and developer previews are internal. They are not
+general availability. They carry no promise.
+
+
+DIRECTIVE 5: The Hardware List Is the Guarantee
+
+AMGOS cannot promise "it works" on hardware it has not tested.
+The hardware compatibility list is not a nicety. It is the mechanism
+by which the promise is kept.
+
+No hardware ships on the compatibility list until it has been tested
+completely, including boot silence, framebuffer continuity, touchpad
+behavior, suspend/resume, and audio.
+
+Hardware that cannot meet every requirement is not added to the list.
+
+
+DIRECTIVE 6: One App Owns the User's Relationship With the System
+
+The primary app — File Manager, Launcher, Installer, Browser — is the
+user's complete interface with the system for navigation, discovery,
+and access. It does not quit. It does not crash without recovery.
+It is the first app built, the most hardened component outside the
+system sessions, and the surface through which every other capability
+is accessed.
+
+No second app store. No second launcher. No second file manager.
+One surface. Always running. Always ready.
+
+
+DIRECTIVE 7: The Setup Wizard Is a Contract
+
+Every question the wizard asks is a question AMGOS commits to never
+asking again at runtime.
+
+The wizard does not exist to collect data. It exists to resolve every
+open question about the user's environment before the user ever reaches
+the desktop. When the wizard is done, AMGOS knows everything it needs
+to know. It acts on that knowledge silently from that point forward.
+
+
+PART III. DECISIONS AND REASONING
+--------------------------------------------------------------------------------
+
+DECISION: Ubuntu LTS as the base
+Reason: Largest hardware compatibility surface. Canonical's HWE kernel
+stack provides tested, newer kernels on an LTS cadence. The widest
+app ecosystem expectation. Long-term support cadence matches a platform.
+Alternatives considered: Arch (rolling, incompatible with stable model),
+Void (smaller ecosystem, fewer drivers), Debian (closer to upstream but
+slower hardware enablement).
+
+DECISION: Hard fork of cosmic-comp for the compositor
+Reason: COSMIC is the only production Wayland compositor written in
+Rust using Smithay (pure Rust). Building a compositor from zero in Rust
+would take years. COSMIC's work is taken, stripped of everything
+general-purpose, and rebuilt for AMGOS's two-process architecture.
+Upstream COSMIC changes are evaluated manually, not pulled automatically.
+We took a snapshot. We own it from that snapshot forward.
+
+DECISION: Zen Browser as embedded engine and first-class citizen
+Reason: Zen Browser is built on Gecko (Firefox's engine), which is
+the only production browser engine not controlled by Google. Zen's
+UI has already been restructured from Firefox's default in ways that
+align with AMGOS's sidebar-first, gesture-driven model. The fork delta
+is kept small. Gecko security updates are pulled on an emergency cadence.
+D-Bus menu protocol and compositor gesture work are contributed upstream
+to keep the delta minimal.
+
+DECISION: No X11, no XWayland
+Reason: X11 is the primary source of the compositor flicker problem.
+It adds complexity, attack surface, and legacy behavior that conflicts
+with the "it works" promise. Apps that require X11 are not supported.
+The hardware compatibility list and the stable release model make this
+tenable: we control the surface.
+
+DECISION: No app store, one primary app
+Reason: An app store is a curation intermediary between the user and
+the software they want. AMGOS's primary app gives the user a browser
+(to see the real app page) and an inspector (to see what the package
+actually contains). Transparency over curation. The user makes an
+informed decision. We do not make it for them.
+
+DECISION: Internal pub/sub for IPC, D-Bus for external
+Reason: Internal pub/sub is fast, auditable, and controlled entirely
+by AMGOS. D-Bus is the established standard that third-party apps
+already implement. Keeping them separate means internal communication
+is never exposed to external apps and external apps never get access
+to the internal message bus.
+
+DECISION: 9–11 GB self-contained image
+Reason: A self-contained image is the only way to guarantee that every
+user gets the same tested, working system. Package managers introduce
+dependency state that can diverge between machines. A complete image
+does not. The size is the cost of the promise.
+
+DECISION: Filer and Pathfinder as the primary app
+Reason: One always-running app owns the user's entire relationship
+with the system. Pathfinder is Filer's search bar — the single entry
+point to files, apps, settings, web, and installs. Install and uninstall
+are symmetric: same surface, same gesture, opposite action. No Linux
+distro has shipped this. Filer is built first because it is the proof
+of the AMG-OS promise and because building it forces the IPC protocol
+between Process 1 and Process 2 to be real before anything else depends
+on it.
+
+DECISION: Astrophage as a first-class diagnostic app
+Reason: The hardware compatibility list guarantees the system at time
+of testing. Astrophage keeps that guarantee accurate over time. Process
+1 maintains a continuous rolling event buffer. When something goes wrong,
+the user opens Astrophage, adds one plain English description, and
+submits a pre-formatted GitHub issue. The user does not need to know
+what a kernel module is. The developer receives a report they can act on.
+This is the feedback loop that makes the hardware compatibility list
+a living document rather than a snapshot.
+
+DECISION: Audio-Video Manager (AVM) as the named audio pipeline
+Reason: PipeWire and WirePlumber handle all audio and video stream
+routing. AVM is the AMG-OS name for that ownership boundary inside
+Process 1. The only custom component is the chime sequencer — a small
+Rust module that fires the boot chime on hardware-ready signal, not
+on a timer. This guarantees chime consistency across all hardware on
+the compatibility list.
+
+DECISION: Boot chime as an original F3 piano composition
+Reason: The first note of Lenka's Everything at Once — F3, C Major,
+piano — remade in Ableton with depth and reverb. Original composition,
+owned by the project, zero licensing complexity. An easter egg for
+users who know the song. A considered, warm, clean chime for users
+who do not. The chime and the AMG-OS wordmark appear simultaneously,
+triggered as a single event by AVM's hardware-ready signal.
+
+DECISION: All updates delivered OTA through the Settings app
+Reason: The user does not visit a website, download an ISO, or open
+a terminal to update AMGOS. Security patches, bug fixes, and feature
+updates all arrive the same way — a notification in Settings, a plain
+English description of what changed, and one button. This is the only
+update model consistent with the core promise. An OS that requires the
+user to manually apply updates has already broken the promise.
+
+DECISION: Codename — Upstream Color
+Reason: Version 0.0.1 and all releases upward carry the codename
+Upstream Color. The codename is an internal and developer-facing
+reference, not a user-facing label. A new codename is assigned only
+at a new major version. The name is chosen deliberately: it references
+both the upstream open source foundations AMGOS is built on and the
+visual, color-driven identity of the platform's interface.
+
+
+PART IV. WHAT AMGOS IS NOT
+--------------------------------------------------------------------------------
+
+AMGOS is not a Linux distribution.
+    It uses Linux as a kernel. It is not a distribution of Linux.
+    It is a platform that happens to use the Linux kernel.
+
+AMGOS is not a desktop environment.
+    A desktop environment sits on top of an OS. AMGOS is the OS.
+    There is no separation between "the OS" and "the desktop" from
+    the user's perspective.
+
+AMGOS is not for enthusiasts.
+    AMGOS is for anyone who uses a computer. The user does not need
+    to know what a compositor is, what a TTY is, what a kernel is,
+    or what a package manager is. If they need to know any of these
+    things to use AMGOS, AMGOS has failed.
+
+AMGOS is not configurable at the system level by the user.
+    The base image is immutable. The user configures their experience
+    through Settings. They do not configure the OS.
+
+AMGOS is not fast-boot at all costs.
+    Boot speed is not the goal. Boot correctness is the goal.
+    The machine is ready when it is ready, and when it is ready,
+    it is fully ready. No half-states. No "still connecting."
+    No "just a moment."
+
+
+PART V. THE MEASURE OF SUCCESS
+--------------------------------------------------------------------------------
+
+AMGOS 1.0 succeeds if a person who has never used Linux, who does not
+know what Linux is, can receive an AMGOS machine, complete the setup
+wizard, and use it as their primary computer without ever needing to
+open a terminal, read a help document, search for a driver, or ask
+someone what went wrong.
+
+That is the bar. Every decision is measured against it.
+
+
+================================================================================
+END OF DECISION, DIRECTIVE, AND VISION DOCUMENT
+AMGOS v0.0.1 Pre-Production Alpha
+================================================================================

@@ -1,0 +1,303 @@
+================================================================================
+AMGOS — A MULTI-PURPOSE GENERAL OPERATING SYSTEM
+GENERAL AGENT SKILL DOCUMENT
+Version: 0.0.1 Pre-Production Alpha
+Status: Internal. Not for distribution.
+================================================================================
+
+
+PURPOSE OF THIS DOCUMENT
+--------------------------------------------------------------------------------
+
+This document tells any AI agent working on AMGOS what the project is,
+what the rules are, what the architecture is, and how to behave when
+working on it. Read this document in full before producing any output.
+Do not rely on training data where this document exists and applies.
+
+
+SECTION 1. WHAT AMGOS IS
+--------------------------------------------------------------------------------
+
+AMGOS is A Multi-Purpose General Operating System.
+
+It is not a Linux distribution. It is not a desktop environment.
+It is a complete, opinionated, stable-channel platform operating system
+that uses the Linux kernel as infrastructure.
+
+The project has one core promise: set it up once, it works after that,
+no troubleshooting.
+
+Every architectural decision, every language choice, every release
+policy exists to keep that promise. When an agent's output conflicts
+with that promise, the output is wrong regardless of its other merits.
+
+The target user knows nothing about Linux, TTYs, compositors, kernels,
+or package managers. AMGOS never exposes any of these to the user.
+
+
+SECTION 2. ARCHITECTURE OVERVIEW
+--------------------------------------------------------------------------------
+
+2.1 Two-Process Architecture
+
+AMGOS runs two top-level process sessions. This boundary is hard.
+
+PROCESS 1 — SYSTEM SESSION
+    Owns: hardware, network credentials, power management, IPC broker,
+    filesystem indexer, Filer backend (installer, uninstaller,
+    Pathfinder search index), download manager,
+    Audio-Video Manager (AVM), Astrophage event logger,
+    permission state.
+    Does not own: any rendered UI, the compositor.
+
+PROCESS 2 — DESKTOP SESSION
+    Owns: Wayland compositor, all rendered UI, animation engine,
+    lockscreen, shutdown UI, Global Menu bar, setup wizard,
+    primary app shell, all app windows.
+    Does not own: hardware, network credentials, filesystem directly.
+
+THE BOUNDARY RULE:
+    Process 2 never touches hardware directly.
+    Process 2 never holds network credentials.
+    Process 2 never writes to the filesystem directly.
+    All of these are requests over the internal IPC protocol.
+    An agent does not generate code that violates this rule.
+
+2.2 IPC
+
+Internal: Custom pub/sub over Unix domain sockets. Rust both sides.
+          Versioned binary message types. Defined in a shared
+          protocol crate. Process 1 publishes. Process 2 subscribes.
+
+External: D-Bus. Third-party apps only. Never exposed to internal
+          pub/sub. Interfaces are versioned.
+
+2.3 Display
+
+Protocol: Wayland only. X11 is not installed. XWayland is not installed.
+Compositor: Forked cosmic-comp, Smithay-based, Rust.
+Animations: cubic-bezier timing system. Every system animation.
+            No exceptions.
+
+2.4 Filer and Pathfinder
+
+Filer is always running. It never quits. It hides when not in use.
+It bridges Process 1 (backend: indexer, installer, downloader,
+Pathfinder search index) and Process 2 (frontend: UI, Zen embed,
+Pathfinder search bar, file browser, install/uninstall surface).
+It is the first app built and the most hardened app in the system.
+
+Pathfinder is not a separate app. Pathfinder is Filer's search bar.
+It is the single entry point to files, apps, settings, web, and
+installs. Install and uninstall are symmetric — same surface,
+same gesture, opposite action. Right-click on any installed app
+shows the Uninstall option. One confirmation. No residual state.
+
+2.5 Zen Browser
+
+Zen Browser is a first-class native citizen and the embedded browser
+engine in the primary app. It is a fork of Zen Browser (Gecko-based).
+Gecko is not modified. The fork diverges only above the engine.
+The fork delta is kept minimal and documented.
+
+
+SECTION 3. LANGUAGE POLICY
+--------------------------------------------------------------------------------
+
+ABOVE THE KERNEL:   Rust. Exclusively.
+INSIDE THE KERNEL:  C. As upstream Ubuntu LTS provides.
+PROHIBITED:         C++ in any AMGOS-authored component.
+                    Python in any system path or boot sequence.
+                    Shell scripts in the boot sequence.
+
+An agent generates Rust for all AMGOS-authored system components.
+If a system-level library has no Rust bindings, the agent writes the
+bindings or flags the gap explicitly. The agent does not bypass the
+language policy.
+
+
+SECTION 4. RELEASE AND IMAGE POLICY
+--------------------------------------------------------------------------------
+
+Release model:  Stable channel only. Complete, signed images.
+                No rolling release. No testing channel to general users.
+Update model:   A/B partition swap. Never partial state.
+Base image:     Read-only. Immutable. Never modified at runtime.
+App layer:      Separate, writable partition. Never touches base.
+Image size:     9–11 GB. Self-contained. All dependencies included.
+Versioning:     Major.minor.patch. Major may break D-Bus protocol.
+                Minor does not. Patch changes nothing user-visible.
+
+
+SECTION 5. WHAT AN AGENT MUST DO
+--------------------------------------------------------------------------------
+
+5.1 Read First
+
+Before generating code, documentation, or architecture proposals:
+    - Confirm which AMGOS documents apply to the task.
+    - Read them. Do not skim.
+    - Do not generate output that contradicts a documented policy
+      without explicitly flagging the contradiction.
+
+5.2 Follow the Language Policy
+
+Generate Rust for all AMGOS-authored components above the kernel.
+Do not generate C++. Do not generate Python for system paths.
+Do not generate shell scripts for the boot sequence.
+
+5.3 Respect the Two-Process Boundary
+
+Do not generate code that routes Process 2 around the IPC protocol.
+Do not generate code that gives Process 2 direct hardware access.
+Do not generate code that stores network credentials in Process 2.
+Do not collapse the boundary for performance or convenience.
+
+5.4 Respect the Wayland Policy
+
+Do not generate X11 code. Do not generate XWayland code.
+Do not generate "compatibility shims" for X11 apps.
+X11 is not supported. The answer to X11 requests is: not supported.
+
+5.5 State Uncertainty Explicitly
+
+When a task requires a decision not covered by existing documentation,
+flag it before generating output. Do not embed an undocumented
+architectural decision inside generated code silently.
+
+State the uncertainty like this:
+    "This task requires a decision about [X] that is not covered
+    by current documentation. My proposed approach is [Y] because
+    [reasoning]. Please confirm before I proceed."
+
+5.6 Do Not Expand Scope Silently
+
+Complete the task given. If completing the task reveals a related
+problem, flag the related problem separately. Do not solve it
+silently and embed the solution in the output without noting it.
+
+5.7 Cite Documents When Relevant
+
+When output is governed by a specific policy, name it.
+Example: "Per the language policy in AMGOS_CONTRACT, this component
+is written in Rust." This keeps reasoning traceable.
+
+5.8 Commit Message Standards
+
+When generating commit messages:
+    State what changed and why. Both. Not just what.
+    Be specific. Name the component, the behavior, and the reason.
+    Bad:  "Fixed IPC bug"
+    Good: "Fixed use-after-free in IPC subscriber that caused desktop
+           session crash when apps closed rapidly under high message
+           volume"
+
+5.9 Protocol Change Documentation
+
+Any change to the internal pub/sub protocol or the D-Bus interfaces
+requires a documentation update. Generate the documentation update
+alongside the code change. Do not generate one without the other.
+
+5.10 Fork Delta Documentation
+
+Any divergence introduced into the Zen Browser fork or the COSMIC
+fork must be documented in the corresponding delta file:
+    FORKS/zen-delta.txt
+    FORKS/cosmic-delta.txt
+Generate the delta entry alongside the code change.
+
+
+SECTION 6. WHAT AN AGENT MUST NOT DO
+--------------------------------------------------------------------------------
+
+Do not generate C++ in any AMGOS-authored component.
+Do not generate X11 or XWayland code under any framing.
+Do not generate code that collapses the two-process boundary.
+Do not generate code that modifies the base image at runtime.
+Do not generate a second internal IPC mechanism.
+Do not expose the internal pub/sub to external apps.
+Do not generate code that stores wifi credentials in Process 2.
+Do not generate shell scripts for the boot sequence.
+Do not generate Plymouth configuration or replacement using
+    third-party boot splash tools. The compositor owns boot display.
+Do not generate a second app launcher, file manager, or app store.
+    The primary app is the only one.
+Do not generate features that require the user to understand
+    Linux internals to use them.
+Do not generate output that contradicts documented policy without
+    explicitly flagging the contradiction in the same response.
+
+
+SECTION 7. PROJECT STRUCTURE REFERENCE
+--------------------------------------------------------------------------------
+
+PROCESSES:
+    amgos-system/       Process 1 — system session (Rust)
+    amgos-desktop/      Process 2 — desktop session (Rust)
+    amgos-protocol/     Shared IPC protocol types (Rust)
+
+FILER (PRIMARY APP):
+    filer/
+        core/           Process 1 backend (no UI)
+            fs/
+            pathfinder/ search index and query resolution
+            packages/
+            downloads/
+            ipc/
+        shell/          Process 2 frontend (all UI)
+            pathfinder/ search bar input and results UI
+            browser/
+            files/
+            installer/  install and uninstall UI
+            ipc/
+        protocol/       Shared message contract
+
+ASTROPHAGE:
+    astrophage/
+        core/           Process 1 event logger and hardware reader
+        shell/          Process 2 UI — report builder, GitHub integration
+        protocol/       Shared types between core and shell
+
+FORKS:
+    FORKS/zen/          Zen Browser fork
+    FORKS/cosmic/       COSMIC compositor fork
+    FORKS/zen-delta.txt     Documented divergences from upstream Zen
+    FORKS/cosmic-delta.txt  Documented divergences from upstream COSMIC
+
+DOCUMENTS:
+    AMGOS_SPEC_v0.0.1.txt       Full technical specification
+    AMGOS_VISION_v0.0.1.txt     Decisions, directives, vision
+    AMGOS_CONTRACT_v0.0.1.txt   Contract and code of conduct
+    AMGOS_AGENT_SKILL_v0.0.1.txt    This document
+    AMGOS_OWNER_PREFS_v0.0.1.txt    Project lead preferences
+
+
+SECTION 8. THE TEST FOR EVERY DECISION
+--------------------------------------------------------------------------------
+
+Before finalizing any output, ask:
+
+    1. Does this output keep the core promise?
+       (Set it up once. It works after that. No troubleshooting.)
+
+    2. Does this output follow the language policy?
+
+    3. Does this output respect the two-process boundary?
+
+    4. Does this output introduce X11 or XWayland?
+
+    5. Does this output modify the base image at runtime?
+
+    6. Does this output expose internal pub/sub to external apps?
+
+    7. Does this output require the user to understand Linux internals?
+
+    8. Is every undocumented decision flagged explicitly?
+
+If any answer is wrong, fix the output before delivering it.
+
+
+================================================================================
+END OF GENERAL AGENT SKILL DOCUMENT
+AMGOS v0.0.1 Pre-Production Alpha
+================================================================================

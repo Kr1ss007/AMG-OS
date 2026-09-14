@@ -1,0 +1,517 @@
+================================================================================
+AMGOS — A MULTI-PURPOSE GENERAL OPERATING SYSTEM
+INTERFACE AND SHELL SPECIFICATION
+Version: 0.0.1 Pre-Production Alpha
+Status: Internal. Not for distribution.
+================================================================================
+
+
+SECTION 1. NAMED ENGINES
+--------------------------------------------------------------------------------
+
+Two engines own the entire interactive surface of AMGOS.
+Everything the user sees, touches, or types through goes through
+one of these two systems. They do not overlap. They do not share
+responsibilities.
+
+1.1 Animation and Interface Engine
+
+    Owns:
+        All visual rendering and animation for system surfaces.
+        Every shell component: Top Global Menu Panel, Smart Dock,
+        Pilot Control, virtual desktop transitions.
+        Every system screen: lockscreen, sleep animation, shutdown
+        screen, restart screen.
+        All window chrome, layered UI components, system tray,
+        pop-up windows, toolbars, sidebars.
+        The cubic-bezier timing system.
+        All transitions between states (lock, unlock, sleep, wake,
+        shutdown, restart, app open, app close, desktop switch).
+
+    Does not own:
+        Input. No keyboard events. No touchpad events.
+        That belongs to MotionWave.
+
+1.2 MotionWave
+
+    Owns:
+        All touchpad input: gestures, scroll, tap, multi-finger,
+        palm rejection, sensitivity.
+        All keyboard input: key events, shortcuts, modifier handling,
+        repeat rate, accessibility key behavior.
+        Routing of input events to the correct surface or app.
+        Gesture recognition at the compositor level — the gesture
+        is identified by MotionWave before any app sees it.
+
+    Does not own:
+        Rendering. No visual output. No animation timing.
+        That belongs to the Animation and Interface Engine.
+
+    Integration:
+        MotionWave publishes input events and recognized gestures
+        to the internal pub/sub. The Animation and Interface Engine
+        subscribes and responds visually. Apps receive routed events
+        through D-Bus.
+
+1.3 Audio-Video Manager (AVM)
+
+    Owns:
+        All audio and video stream routing.
+        Boot chime sequencing and hardware-ready synchronization.
+        Notification sounds, system sounds, music, video audio.
+        Stream priority and ducking policy.
+        PipeWire and WirePlumber configuration.
+        Sleep, wake, shutdown, and restart audio drain behavior.
+
+    Does not own:
+        Any visual surface. No rendering. No animation.
+        Input events. That belongs to MotionWave.
+
+    Lives in:
+        Process 1. AVM is a system-level owner, not a desktop owner.
+        It publishes audio state (ready, stream active, device changed)
+        to the internal pub/sub. Process 2 subscribes for visual
+        feedback only (volume indicator, now-playing state).
+
+    Built on:
+        PipeWire — audio and video stream routing server.
+        WirePlumber — PipeWire session manager, policy owner.
+        Chime sequencer — custom Rust component inside AVM.
+        Fires the boot chime on hardware-ready signal, not on a timer.
+        One stream. High priority. Nothing ducks or interrupts it.
+
+    Stream priority order (highest to lowest):
+        Boot chime         — fires once, cannot be interrupted
+        System sounds      — notifications, UI feedback
+        Music / video      — ducked briefly by system sounds
+        App audio          — standard routing
+        Microphone input   — separate input pipeline
+
+
+SECTION 2. FIRST-CLASS NATIVE APPS
+--------------------------------------------------------------------------------
+
+2.1 Terminow
+
+    Classification: First-class native citizen app.
+    Purpose: The AMGOS terminal emulator.
+
+    Properties:
+        GPU-accelerated rendering. Text rendering does not touch
+        the CPU render path. Smooth at all font sizes and scroll speeds.
+        Polished UI. Consistent with AMGOS's visual language.
+        Behaves like a native AMGOS app in every respect:
+        Global Menu in the top panel, gesture support via MotionWave,
+        sleep/wake awareness, proper layered window chrome.
+
+    It is not a bundled Linux terminal with a theme applied.
+    It is built to AMGOS's standards from the start.
+
+2.2 Settings
+
+    Classification: First-class native citizen app.
+    Purpose: The single place where users change how AMGOS behaves.
+
+    Properties:
+        Every user-facing configuration option lives here.
+        Nothing requires a terminal to configure.
+        Settings writes to the signed configuration state owned
+        by Process 1. It does not write files directly.
+        Organized by topic, not by technical system. The user
+        looks for "Display" not "Compositor configuration."
+        Covers: display, sound, network, touchpad, keyboard,
+        accessibility, accounts, privacy, updates, and appearance.
+
+    Settings does not expose internal system architecture.
+    A user adjusting their display scaling does not need to know
+    what a compositor is.
+
+
+SECTION 3. SHELL COMPONENTS
+--------------------------------------------------------------------------------
+
+All shell components are owned by the Animation and Interface Engine.
+All shell components receive input exclusively through MotionWave.
+All shell components live in Process 2.
+
+3.1 Top Global Menu Panel
+
+    Position: Top of screen, full width. Fixed. Never hides.
+
+    Left side:
+        A perfect rectangle box. No rounded corners. Space orange.
+        This is the AMGOS identity mark. No logo. No wordmark.
+        Just the rectangle. Clicking it opens the system menu.
+
+    Center / remainder of the panel:
+        Global Menu for the focused app. Native apps implement
+        the AMGOS D-Bus menu protocol directly. Foreign apps
+        (GTK, Qt, Electron) talk to the D-Bus menu bridge.
+        Apps that implement neither show no menu in the panel.
+
+    Right side:
+        System tray. Clock. Status indicators (network, audio,
+        battery where applicable). Notification center access.
+
+    Visual language:
+        Rectangle box: space orange, no rounded corners, perfect edges.
+        Panel itself: consistent with the AMGOS surface color system.
+        No visual noise. No gradients that were not chosen deliberately.
+
+3.2 Smart Dock
+
+    Behavior:
+        Automatically hides when a window moves over or near it.
+        Automatically shows when the cursor approaches the dock edge
+        or when no window is near it.
+        Never obscures content the user is working with.
+        Never requires the user to manage it manually.
+
+    Contents:
+        Pinned apps. Running apps (indicated clearly). Recent apps.
+
+    Animation:
+        Show and hide are handled by the Animation and Interface Engine
+        using the cubic-bezier timing system. The dock does not pop.
+        It moves with intention.
+
+3.3 Pilot Control
+
+    Classification: Mission Control adjacent. Meaningfully better.
+
+    Layout:
+        Left sidebar: virtual desktop list. Each desktop is a named
+        slot. A + icon at the bottom creates a new virtual desktop.
+        Dragging an app thumbnail onto the + icon creates a new
+        desktop automatically and moves the app into it.
+
+        Center: all open app and window thumbnails for the current
+        virtual desktop. Full, accurate previews. Not placeholder icons.
+
+    Interaction:
+        Drag and drop from center to any desktop in the left sidebar.
+        Drag to + creates a new desktop and completes the move.
+        Click a desktop in the sidebar to switch to it.
+        Click a thumbnail in the center to bring that app to focus.
+
+    Input:
+        Triggered by MotionWave gesture (multi-finger swipe, configurable).
+        Navigable by keyboard through MotionWave keyboard routing.
+
+    Animation:
+        Entry and exit handled by the Animation and Interface Engine.
+        Thumbnails arrange with the cubic-bezier timing system.
+        The transition feels like the rest of the OS.
+
+3.4 Virtual Desktop Transitions
+
+    Switching between virtual desktops uses a smooth directional
+    transition. The outgoing desktop slides out. The incoming desktop
+    slides in. Direction matches the position in the left sidebar
+    (moving to a desktop above slides up, below slides down).
+
+    The transition is handled entirely by the Animation and Interface
+    Engine. No flicker. No blank frame between desktops.
+    The cubic-bezier curve governs the entire motion.
+
+3.5 Tiling Window Management
+
+    Native apps and Wayland app windows support keyboard-driven tiling.
+
+    Shortcut:   Command key + Arrow key
+    Behavior:
+        Command + Left      Tile active window to left half
+        Command + Right     Tile active window to right half
+        Command + Up        Maximize active window
+        Command + Down      Restore / unmaximize active window
+
+    Tiling is handled by the compositor (Process 2).
+    The shortcut is registered and routed by MotionWave.
+    The tile animation uses the cubic-bezier timing system.
+    Tiling applies to native AMGOS apps and Wayland-native apps.
+    X11 apps are not supported and therefore tiling does not apply.
+
+
+SECTION 4. WINDOW CHROME
+--------------------------------------------------------------------------------
+
+4.1 Traffic Light Controls
+
+    Position: Top left corner of every window. Three circles.
+    Behavior: Symbols are hidden by default. Symbols appear on hover.
+
+    Close button:
+        Color:      Space orange
+        Symbol:     X, shown on hover only
+        Action:     Closes the window
+
+    Minimize button:
+        Color:      Space white
+        Symbol:     Minus, shown on hover only
+        Action:     Minimizes window to Smart Dock
+
+    Maximize button:
+        Color:      Sky blue
+        Symbol:     Plus or expand icon, shown on hover only
+        Action:     Maximizes window / restores if already maximized
+
+    Rules:
+        All three buttons are present on every window that has chrome.
+        Symbol visibility is tied to cursor proximity to the button
+        group, not to each button individually. Hover the group,
+        all three symbols appear simultaneously.
+        Colors are consistent across all windows, all apps, always.
+        No app overrides the traffic light colors or symbols.
+
+4.2 Pop-up Confirmation Buttons
+
+    Every system confirmation dialog (delete, overwrite, destructive
+    action, permission request) uses this button standard:
+
+    Yes / Confirm:
+        Color:      Space orange
+        Position:   Right button in the pair
+
+    No / Cancel:
+        Color:      Space white
+        Position:   Left button in the pair
+
+    Rules:
+        Yes is always space orange. No is always space white.
+        Position is always right / left respectively.
+        No app or dialog inverts this or uses different colors.
+        This consistency means the user learns the pattern once
+        and it applies everywhere.
+
+
+SECTION 6. LAYERED STACKED UI COMPONENTS
+--------------------------------------------------------------------------------
+
+AMGOS uses a layered stacking model for all UI surfaces. Every visual
+element has a defined layer. Elements in higher layers always render
+above elements in lower layers. No element renders outside its layer.
+
+The stack, from bottom to top:
+
+    Layer 0 — Desktop surface
+        Wallpaper and desktop background. Lowest layer.
+
+    Layer 1 — Window
+        All application windows. Standard app content lives here.
+
+    Layer 2 — Toolbar
+        In-window toolbars attached to a specific window.
+        Moves with the window. Part of the window's chrome.
+
+    Layer 3 — Sidebar
+        In-window sidebars. Navigation panels. File trees.
+        Part of the window's chrome but rendered above the toolbar.
+
+    Layer 4 — Content
+        The primary content area of a window. The document, the
+        canvas, the terminal output. What the user is working with.
+
+    Layer 5 — Smart Dock
+        The dock. Above windows when visible. Hidden when a window
+        approaches.
+
+    Layer 6 — Top Global Menu Panel
+        Always on top of all app content. Never obscured.
+
+    Layer 7 — System Tray and Status Indicators
+        Part of the Top Global Menu Panel's right side. Same layer.
+
+    Layer 8 — Pop-up Windows
+        Contextual menus, dropdowns, tooltips, right-click menus.
+        Always above the content they relate to.
+
+    Layer 9 — Notifications
+        System notifications. Above everything except overlays.
+
+    Layer 10 — Pilot Control overlay
+        When active, covers the full screen except the Top Global
+        Menu Panel.
+
+    Layer 11 — Lockscreen
+        Above everything. Nothing renders above the lockscreen
+        except the shutdown and restart screens.
+
+    Layer 12 — Shutdown / Restart / Sleep screens
+        The highest layer. Nothing renders above these.
+
+This model is closer to modern macOS than to traditional Linux desktop
+environments. Every layer has a purpose. No layer is decorative.
+
+
+SECTION 7. SYSTEM SCREENS
+--------------------------------------------------------------------------------
+
+All system screens are owned by the Animation and Interface Engine.
+All run in Process 2. All use the cubic-bezier timing system.
+
+5.1 Lockscreen
+
+    Polished. Full-screen. Consistent with AMGOS visual language.
+    Shows time, date, and user avatar at minimum.
+    Authentication input is clean, focused, minimal.
+    No visual clutter. No system information exposed.
+
+    Entry animation: fade in from the sleep animation or from a
+    direct lock action. Smooth. Not abrupt.
+    Exit animation: fade out to the desktop on successful authentication.
+
+5.2 Sleep Animation
+
+    When the system sleeps, the screen fades to black.
+    The fade is smooth, governed by the cubic-bezier timing system.
+    It does not cut. It does not flash. It fades.
+    No text. No icons. Just the fade.
+
+    On wake, the lockscreen fades in from black.
+
+5.3 Shutdown Screen
+
+    Black background.
+    Single line of text, centered: "goodbye"
+    Lowercase. No punctuation beyond the word itself.
+    The text fades in, holds briefly, then the screen holds black
+    as the system powers down.
+
+    Inspired by Windows Phone's shutdown behavior.
+    Simple. Final. Considered.
+
+5.4 Restart Screen
+
+    Identical visual treatment to the shutdown screen.
+    Text: "i'll see you in a bit"
+    Lowercase. Same typography. Same centered position.
+    Same black background.
+    The text fades in, holds, then the screen transitions to
+    the boot sequence.
+
+    The two screens share the same UI component. Only the text
+    differs. They are unmistakably the same system.
+
+
+SECTION 8. ICONS AND CURSOR
+--------------------------------------------------------------------------------
+
+Icons:
+    All system icons and app icons are sourced from existing,
+    established icon packs. Not generated. Not AI-produced.
+    Chosen for visual consistency with AMGOS's aesthetic.
+    A single icon pack governs all system surfaces.
+    App icons from third-party apps are displayed as provided
+    by the app, within the constraints of AMGOS's icon grid.
+
+Cursor:
+    Sourced from an existing cursor pack. Not generated.
+    Chosen for clarity, precision, and visual fit with the
+    AMGOS surface color system.
+    Cursor rendering is handled by the compositor (Process 2).
+    Cursor behavior (sensitivity, acceleration) is owned by MotionWave.
+
+Policy:
+    The decision to source rather than generate icons and cursors
+    is deliberate. Generating assets produces inconsistency at the
+    edges — sizes, optical weights, stroke widths — that erodes
+    the visual coherence of the system. Sourcing from a single
+    established pack guarantees consistency that generated assets
+    cannot.
+
+
+SECTION 9. TYPOGRAPHY
+--------------------------------------------------------------------------------
+
+AMGOS uses four typefaces. Each has a defined role. No surface uses
+a typeface outside its defined role. No app overrides system typography
+for system-rendered surfaces.
+
+    Font                Role                    Used For
+    ----                ----                    --------
+    Inter               Main / Display          Top Global Menu Panel,
+                                                window titles, system UI
+                                                labels, Settings, all
+                                                primary UI text
+
+    Young Serif         Primary / Body          Long-form reading content,
+                                                document body text,
+                                                descriptions, onboarding
+                                                and wizard body copy
+
+    Panamera            Secondary               Supporting labels,
+                                                captions, metadata,
+                                                secondary information
+                                                in panels and sidebars
+
+    JetBrains Mono      CLI / Monospace         Terminow, all terminal
+                                                output, code blocks,
+                                                file paths, technical
+                                                strings in any surface
+
+Rules:
+    All four fonts are bundled in the AMGOS base image.
+    No internet connection is required to render system typography.
+    Font rendering is handled by the compositor via cosmic-text.
+    Apps may use their own typefaces for their own content areas.
+    Apps do not override system typography in system-rendered chrome
+    (window titles, Global Menu text, notification text).
+
+    Shutdown screen ("goodbye") and restart screen ("i'll see you
+    in a bit") use Inter. Lowercase. No other styling.
+    Lockscreen time and date use Inter Display weight.
+
+
+SECTION 10. COMPONENT OWNERSHIP SUMMARY
+--------------------------------------------------------------------------------
+
+    Component                       Engine / Owner
+    -------                         -------
+    Top Global Menu Panel           Animation and Interface Engine
+    Smart Dock                      Animation and Interface Engine
+    Pilot Control                   Animation and Interface Engine
+    Virtual Desktop Transitions     Animation and Interface Engine
+    Tiling window management        Animation and Interface Engine
+    Traffic light controls          Animation and Interface Engine
+    Pop-up confirmation buttons     Animation and Interface Engine
+    Layered UI stack                Animation and Interface Engine
+    Lockscreen                      Animation and Interface Engine
+    Sleep animation                 Animation and Interface Engine
+    Shutdown screen                 Animation and Interface Engine
+    Restart screen                  Animation and Interface Engine
+    Window chrome                   Animation and Interface Engine
+    Notifications                   Animation and Interface Engine
+    Pop-up windows                  Animation and Interface Engine
+    System tray                     Animation and Interface Engine
+    cubic-bezier timing system      Animation and Interface Engine
+    Typography rendering            Animation and Interface Engine
+
+    Touchpad input                  MotionWave
+    Keyboard input                  MotionWave
+    Tiling keyboard shortcuts       MotionWave
+    Gesture recognition             MotionWave
+    Input routing to apps           MotionWave
+    Cursor sensitivity              MotionWave
+    Keyboard shortcuts              MotionWave
+
+    All audio streams               Audio-Video Manager (AVM)
+    Boot chime sequencing           Audio-Video Manager (AVM)
+    Stream priority and ducking     Audio-Video Manager (AVM)
+    Video stream routing            Audio-Video Manager (AVM)
+
+    Cursor rendering                Compositor (Process 2)
+    Icon rendering                  Compositor (Process 2)
+    App window rendering            Compositor (Process 2)
+    Font rendering (cosmic-text)    Compositor (Process 2)
+
+    Terminow                        First-class native app
+    Settings                        First-class native app
+    Astrophage                      First-class native app
+    Filer (with Pathfinder)         First-class native app (primary)
+    Zen Browser                     First-class native app
+
+
+================================================================================
+END OF INTERFACE AND SHELL SPECIFICATION
+AMGOS v0.0.1 Pre-Production Alpha
+================================================================================
