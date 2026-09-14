@@ -1,0 +1,3 @@
+# AMGOS Kernel Parameters (Boot Silence & Framebuffer Continuity)
+# Specified in AMGOS SPEC SECTION 4.2
+quiet rd.systemd.show_status=false vt.global_cursor_default=0 console=null splash=0

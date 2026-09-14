@@ -4,7 +4,9 @@ Status: Active tracking
 ================================================================================
 
 Every divergence from upstream COSMIC (cosmic-comp) must be recorded here.
-Snapshot taken from pure Rust Smithay foundation.
+Snapshot source: https://github.com/pop-os/cosmic-comp.git (branch master)
+Snapshot commit: a7349b72e39fd91d7ed25eddb2fa24b900a615d5
+Snapshot date: 2026-09-14
 
 DIVERGENCES:
 1. Split into two-process architecture (Compositor in Process 2, Hardware in Process 1).

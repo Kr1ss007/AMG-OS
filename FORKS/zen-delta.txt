@@ -4,6 +4,9 @@ Status: Active tracking
 ================================================================================
 
 Every divergence from upstream Zen Browser must be recorded here.
+Snapshot source: https://github.com/zen-browser/desktop.git (branch dev)
+Snapshot commit: 5362ddbccd6db81162c6b239bf5edd4d7b922098
+Snapshot date: 2026-09-14
 Gecko security updates are pulled on an emergency cadence.
 Divergences are restricted to layers above the engine.
 

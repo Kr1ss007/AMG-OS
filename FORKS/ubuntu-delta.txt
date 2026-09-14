@@ -1,0 +1,46 @@
+================================================================================
+AMGOS — UBUNTU LTS BASE & KERNEL FORK DELTA LOG
+Status: Active tracking
+================================================================================
+
+Every divergence from upstream Ubuntu LTS is documented here.
+Base: Ubuntu 24.04 LTS (Noble Numbat) with Canonical HWE kernel stack.
+
+SECTION 1. KERNEL DIVERGENCE (AMGOS SPEC SECTION 2.1)
+Source:     Ubuntu LTS kernel with Canonical HWE patch set.
+Language:   C (kernel only, untouched, upstream).
+Policy:     No custom kernel patches except those required for
+            framebuffer continuity and boot silence.
+Parameters: quiet, rd.systemd.show_status=false, vt.global_cursor_default=0,
+            console=null (or redirected). Zero visible kernel messages.
+Cadence:    Ubuntu LTS cycle (two-year base, HWE stack for hardware enablement).
+
+SECTION 2. USERLAND STRIPPING (AMGOS SPEC SECTION 2.2)
+Source:     Ubuntu LTS base, stripped.
+
+REMOVED:
+1. snapd — completely removed; Snap packages are handled by Filer backend
+   via isolated container runtime in the App Layer, never touching base.
+2. cloud-init — stripped; AMGOS is a workstation/laptop platform OS.
+3. GNOME & all GNOME dependencies — stripped; Wayland compositor is owned
+   by Process 2 (forked cosmic-comp in Rust).
+4. apt as a user-facing tool — stripped; users configure and update via
+   Settings (OTA) and Filer (Pathfinder). apt is never exposed to users.
+5. All server tooling — stripped (ssh server, cloud daemons, server services).
+6. All X11 and X11 legacy components — stripped; pure Wayland only.
+   XWayland is not installed.
+7. All Ubuntu branding, logos, motd, and plymouth boot splash — stripped.
+   Compositor owns GOP framebuffer handoff without splash screen.
+
+RETAINED:
+1. Hardware detection layer (systemd-udevd, kmod, PCI/USB probing).
+2. Driver and firmware infrastructure (linux-firmware, Canonical HWE drivers).
+3. .deb package format inspection and installation support for the Filer
+   installer backend only (in the App Layer partition).
+
+SECTION 3. LANGUAGE POLICY (AMGOS SPEC SECTION 2.3)
+Above the kernel: Rust, exclusively.
+Inside the kernel: C, as upstream provides.
+Prohibited: C++ in any AMGOS-authored component, Python in any system path
+            or boot sequence, shell scripts in the boot sequence.
+================================================================================

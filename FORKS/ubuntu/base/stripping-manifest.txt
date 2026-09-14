@@ -1,0 +1,66 @@
+================================================================================
+AMGOS — UBUNTU BASE USERLAND STRIPPING MANIFEST
+Source: Ubuntu 24.04 LTS (Noble) Minimal Rootfs
+================================================================================
+
+EXPLICITLY REMOVED PACKAGES AND SUBSYSTEMS:
+[SNAP]
+- snapd
+- snap-confine
+- ubuntu-core-launcher
+
+[CLOUD & SERVER DAEMONS]
+- cloud-init
+- cloud-initramfs-copymods
+- cloud-initramfs-dyn-netconf
+- openssh-server
+
+[DESKTOP & WINDOW MANAGERS]
+- gnome-shell
+- gnome-session
+- gnome-settings-daemon
+- mutter
+- gdm3
+- lightdm
+- plymouth
+- plymouth-theme-ubuntu-text
+
+[X11 & LEGACY DISPLAY]
+- xserver-xorg
+- xserver-xorg-core
+- xwayland
+- libx11-6
+- libx11-data
+- libxcb1
+- x11-common
+
+[USER-FACING PACKAGE TOOLS]
+- apt (removed from user PATH; binary restricted to Process 1 Filer backend)
+- software-properties-common
+- unattended-upgrades
+
+[BRANDING & REMNANTS]
+- ubuntu-wallpapers
+- ubuntu-advantage-tools
+- ubuntu-release-upgrader-core
+- motd-news-config
+
+RETAINED CORE SUBSYSTEMS:
+[HARDWARE DETECTION & KERNEL MODULES]
+- systemd-udevd
+- kmod
+- pciutils
+- usbutils
+- libdrm2
+- libdrm-common
+
+[FIRMWARE & DRIVERS]
+- linux-firmware
+- nvidia-driver (discrete GPU proprietary driver module)
+- intel-microcode / amd64-microcode
+
+[APPLICATION RUNTIME & PACKAGE INSPECTION]
+- dpkg (used internally by Filer backend for .deb inspection)
+- bubblewrap (sandboxing runtime)
+- libseccomp2
+================================================================================

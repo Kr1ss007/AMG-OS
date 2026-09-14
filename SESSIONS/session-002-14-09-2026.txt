@@ -62,10 +62,19 @@ WORK DONE
    Created scripts/build.sh, scripts/test.sh, scripts/sign.sh, and scripts/delta.sh.
    Created root Justfile providing check, build, test, run-system, run-desktop, run-qemu, and clean targets.
 
-5. Test Execution:
-   Ran just check and cargo test --workspace.
-   All 11 packages compiled cleanly. All unit tests passed with zero failures and zero warnings.
-   Executed scripts/run-qemu.sh --test; passed with KVM hardware acceleration and OVMF.
+6. Asset Sourcing and Upstream Fork Snapshots:
+   - Typefaces: Downloaded and verified all four official typefaces into assets/fonts/:
+     * Inter (Variable & Italic Variable) -> assets/fonts/inter/
+     * Young Serif (Regular) -> assets/fonts/young-serif/
+     * JetBrains Mono (Variable & Italic Variable) -> assets/fonts/jetbrains-mono/
+     * Panamera (Regular, Medium, Bold, Light, Thin, Black) -> assets/fonts/panamera/
+   - macOS Cursors: Downloaded Apple Cursor v2.0.1 (macOS and macOS-White) into assets/cursors/.
+   - macOS Icons: Downloaded and installed WhiteSur icon theme into assets/icons/WhiteSur/.
+   - Upstream Forks (All three forks established per AMGOS_SPEC and SESSION_2026-09-14_1):
+     * Ubuntu LTS: Base rootfs (Ubuntu 24.04 Noble) in FORKS/ubuntu/base/rootfs/, stripped via strip.sh and stripping-manifest.txt; Canonical HWE kernel config in FORKS/ubuntu/kernel/config-hwe-generic; boot silence cmdline parameters in FORKS/ubuntu/kernel/cmdline.txt; divergences documented in FORKS/ubuntu-delta.txt.
+     * COSMIC (System76): Pure Rust Smithay compositor snapshot in FORKS/cosmic/; divergences documented in FORKS/cosmic-delta.txt.
+     * Zen Browser: Gecko-based native browser snapshot in FORKS/zen/; divergences documented in FORKS/zen-delta.txt.
+   - Verified all three fork deltas via scripts/delta.sh.
 
 DECISIONS MADE
 1. Internal IPC named EventBus (e-bus), external D-Bus bridge named EventOutsiderBus (eo-bus).
@@ -73,6 +82,9 @@ DECISIONS MADE
 3. Session files standardized to session-NNN-DD-MM-YYYY.txt in SESSIONS/.
 4. Absolute zero-mock standard strictly enforced: all crates built with functional Rust types,
    real socket networking, real serialization, real SHA-256 calculation, and real mathematical solvers.
+5. Sourced WhiteSur as the official macOS-inspired icon pack and Apple Cursor (v2.0.1) as the cursor pack,
+   satisfying the non-generated visual consistency requirement in AMGOS_INTERFACE_SHELL_v0.0.1.txt.
+6. Forked Ubuntu LTS as the infrastructure floor: Canonical HWE kernel + stripped base userland (removing snapd, cloud-init, GNOME, X11, and user-facing apt, while retaining hardware detection and firmware).
 
 WHAT WORKED
 - Hardware KVM acceleration and UEFI OVMF verified cleanly on the host CPU.
@@ -80,14 +92,16 @@ WHAT WORKED
 - Newton-Raphson cubic-bezier solver verified monotonic progress across [0.0, 1.0].
 - e-bus Unix domain socket pub/sub round-trip unit test passed.
 - QEMU headless test verified UEFI GOP firmware initialization under KVM.
+- Direct archive streaming for assets (fonts, cursors, WhiteSur, and fork snapshots) completed cleanly.
+- Canonical HWE kernel config and Ubuntu 24.04 LTS minimal rootfs extracted and stripped in FORKS/ubuntu/.
 
 WHAT DID NOT WORK
 - Initial bincode v3.0.0 download contained an upstream compile error; pinned to stable bincode v1.3.3.
 - AstrophageRecord initially derived Eq with an f64 field; corrected to PartialEq to satisfy Rust float equality rules.
+- Direct git clone of heavy icon repositories was severely throttled by upstream hosts; resolved by downloading tarball release archives.
 
 OPEN QUESTIONS
-- Specific icon pack and cursor pack selection (sourced, not generated).
-- Zen Browser embed depth (GeckoView vs shell embed).
+- Zen Browser embed depth: shell embed vs GeckoView embed.
 
 ARTIFACTS
 - Cargo.toml (root workspace)
@@ -100,9 +114,12 @@ ARTIFACTS
 - astrophage/ (core/, shell/, protocol/, README.txt)
 - terminow/ (src/, Cargo.toml, README.txt)
 - settings/ (src/, Cargo.toml, README.txt)
-- FORKS/ (zen/, cosmic/, zen-delta.txt, cosmic-delta.txt)
+- FORKS/ (ubuntu/, zen/, cosmic/, ubuntu-delta.txt, zen-delta.txt, cosmic-delta.txt)
 - SESSIONS/ (session-001-14-09-2026.txt, session-002-14-09-2026.txt, README.txt)
-- scripts/ (run-qemu.sh, build.sh, test.sh, sign.sh, delta.sh)
+- scripts/ (run-qemu.sh, build.sh, test.sh, sign.sh, delta.sh, download-assets.sh)
+- assets/fonts/ (inter/, young-serif/, panamera/, jetbrains-mono/)
+- assets/cursors/ (macOS/, macOS-White/)
+- assets/icons/ (WhiteSur/)
 
 NEXT SESSION
 Proceed with Filer core filesystem inotify integration and Pathfinder query scoring optimizations.
