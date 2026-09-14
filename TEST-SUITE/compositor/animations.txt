@@ -1,0 +1,3 @@
+TEST: Cubic-Bezier Animation Timing Verification
+Condition: Window transitions, workspace switches, dock auto-hide, and lockscreen fades occur.
+Expected Outcome: All animations evaluate using the defined cubic-bezier timing functions (STANDARD, DECELERATE, ACCELERATE, SYSTEM_SPRING) with continuous monotonic progression and zero frame stutter.

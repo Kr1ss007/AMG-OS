@@ -1,0 +1,3 @@
+TEST: Two-Process Boundary Enforcement
+Condition: Process 2 executes UI interactions and attempts hardware or filesystem operations.
+Expected Outcome: Process 2 has zero direct access to raw block devices, network credentials, or direct hardware I/O. All interactions strictly route through EventBus (e-bus) messages to Process 1.

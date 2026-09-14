@@ -1,0 +1,3 @@
+TEST: Pathfinder Search Index and Latency
+Condition: User types query strings into the Pathfinder search bar.
+Expected Outcome: Results are returned within <50ms, ranked accurately across Applications, Files, Settings, and Web.

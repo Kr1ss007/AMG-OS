@@ -1,0 +1,21 @@
+================================================================================
+AMGOS CONTRIBUTING GUIDELINES
+================================================================================
+
+1. Language Policy:
+   All code above the kernel must be written in Rust.
+   No C++ in any AMGOS-authored component. No Python in system paths.
+   No shell scripts in the boot sequence.
+
+2. Architecture Boundary:
+   Process 2 must never access hardware, hold network credentials,
+   or write to the filesystem directly. All requests must go through
+   EventBus (e-bus).
+
+3. Wayland Policy:
+   Pure Wayland only. No X11 or XWayland contributions will be accepted.
+
+4. Session & Test Discipline:
+   Every working session must produce a session-NNN-DD-MM-YYYY.txt entry.
+   Every feature and bug fix must update TEST-SUITE/ and CHANGELOG/.
+================================================================================

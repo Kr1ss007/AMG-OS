@@ -1,0 +1,3 @@
+TEST: EventBus (e-bus) Pub/Sub Ordering and Reliability
+Condition: Process 1 publishes high-volume SystemEvents over Unix domain sockets while Process 2 submits DesktopRequests.
+Expected Outcome: Strict FIFO frame ordering, zero frame corruption, payload Fletcher checksum verified, automatic recovery upon client reconnection.

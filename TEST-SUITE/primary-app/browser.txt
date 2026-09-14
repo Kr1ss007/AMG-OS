@@ -1,0 +1,3 @@
+TEST: Zen Browser Embed & Download Handoff
+Condition: User browses the web inside Filer via embedded Zen/Gecko view and clicks a download link.
+Expected Outcome: Web content renders smoothly. Package download requests are intercepted and handed off directly to Process 1 download staging without triggering external file dialogs.

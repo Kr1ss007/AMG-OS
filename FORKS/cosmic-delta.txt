@@ -1,0 +1,15 @@
+================================================================================
+AMGOS — COSMIC COMPOSITOR FORK DELTA LOG
+Status: Active tracking
+================================================================================
+
+Every divergence from upstream COSMIC (cosmic-comp) must be recorded here.
+Snapshot taken from pure Rust Smithay foundation.
+
+DIVERGENCES:
+1. Split into two-process architecture (Compositor in Process 2, Hardware in Process 1).
+2. X11 and XWayland completely removed; pure Wayland surface management only.
+3. Cubic-bezier animation timing system unified across all window and shell transitions.
+4. Top Global Menu panel and Space Orange identity mark (#FF5500) integrated into compositor chrome.
+5. Window chrome traffic lights (close, minimize, maximize with group hover reveal) standard enforcement.
+================================================================================

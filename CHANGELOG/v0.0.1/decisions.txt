@@ -1,0 +1,19 @@
+AMGOS v0.0.1 Cycle Decisions
+================================================================================
+1. Internal IPC Naming:
+   Designated as EventBus / e-bus for custom Unix socket pub/sub.
+   External D-Bus bridge designated as EventOutsiderBus / eo-bus to maintain strict
+   isolation and prevent third-party apps from reaching internal pub/sub directly.
+
+2. Build Automation:
+   Adopted just and root Justfile over makefile per project lead directive.
+
+3. Two-Process Hard Boundary:
+   Process 1 owns hardware, credentials, power, and AVM.
+   Process 2 owns Wayland compositor and rendered UI.
+   Process 2 never holds network credentials or raw filesystem write access.
+
+4. Filer Built First:
+   Building Filer first forces the IPC message contract between Process 1 and Process 2
+   to be fully defined and verified before dependent services are added.
+================================================================================

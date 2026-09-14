@@ -1,0 +1,11 @@
+# AMGOS Monorepo Codeowners
+*                       @amgos-core-team
+/amgos-system/          @amgos-core-team
+/amgos-desktop/         @amgos-core-team
+/amgos-protocol/        @amgos-core-team
+/filer/                 @amgos-core-team
+/astrophage/            @amgos-core-team
+/terminow/              @amgos-core-team
+/settings/              @amgos-core-team
+/docs/                  @amgos-core-team
+/SESSIONS/              @amgos-core-team

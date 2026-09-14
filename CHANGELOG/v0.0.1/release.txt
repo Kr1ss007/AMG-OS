@@ -1,0 +1,28 @@
+AMGOS v0.0.1 (Pre-Production Alpha — Upstream Color)
+================================================================================
+RELEASE SUMMARY:
+
+1. Architecture:
+   - Hard two-process boundary: Process 1 (System Session) and Process 2 (Desktop Session).
+   - EventBus (e-bus): Versioned binary pub/sub over Unix domain sockets.
+   - EventOutsiderBus (eo-bus): D-Bus isolation bridge for external applications.
+   - Language policy enforced: 100% Rust above the kernel.
+   - Display: Pure Wayland exclusively. Zero X11 or XWayland components.
+
+2. First-Class Native Citizen Apps:
+   - Filer (with Pathfinder search bar): Always-running primary app.
+     Unified file browser, ranked search, multi-format installer (.deb, .flatpak, .appimage, .snap),
+     and embedded Zen Browser.
+   - Zen Browser: Gecko-based fork with D-Bus Global Menu and MotionWave touchpad gestures.
+   - Terminow: GPU-accelerated terminal emulator with JetBrains Mono typography and POSIX PTY.
+   - Settings: Centralized topic-based configuration surface with OTA update management.
+   - Astrophage: Diagnostic reporter reading rolling ring-buffer and formatting GitHub issues.
+
+3. Interface & Shell:
+   - Top Global Menu Panel with Space Orange (#FF5500) sharp rectangle mark.
+   - Animation & Interface Engine powered by cubic-bezier numerical solver.
+   - Window chrome traffic lights with group proximity hover reveal.
+   - Setup wizard (7 sequential screens, one question per screen).
+   - Shutdown ("goodbye") and Restart ("i'll see you in a bit") screens.
+   - Boot Chime: Original F3 piano composition (174.61 Hz) synchronized with display wordmark.
+================================================================================

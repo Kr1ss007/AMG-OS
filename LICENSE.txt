@@ -1,0 +1,5 @@
+================================================================================
+AMGOS PROPRIETARY SOURCE CODE LICENSE
+Copyright (c) 2026 AMG-OS Project Leadership and Contributors.
+All rights reserved. Internal Pre-Production Alpha. Not for distribution.
+================================================================================

@@ -1,0 +1,8 @@
+TEST: Hardware Compatibility List Protocol
+Condition: Reference target hardware is evaluated against the AMGOS Hardware Specification.
+Expected Outcome:
+- CPU: Intel Core i5-13420H (or 2020+ modern x86_64) verified
+- Discrete GPU: NVIDIA RTX 3050 (or discrete GPU verified, MUX switch verified, no PRIME/Optimus)
+- Framebuffer continuity verified
+- Audio readiness verified via AVM
+- Suspend/resume without kernel or compositor fault

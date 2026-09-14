@@ -1,0 +1,3 @@
+TEST: Global Menu Rendering in Top Bar
+Condition: Native and foreign applications gain focus.
+Expected Outcome: Menu items render in the Top Global Menu Panel via D-Bus menu protocol (org.amgos.GlobalMenu). Unfocused or unsupported apps display no menu clutter.

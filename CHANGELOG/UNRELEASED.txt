@@ -1,0 +1,20 @@
+AMGOS UNRELEASED CHANGES
+================================================================================
+Entries follow this format:
+[COMPONENT] Brief description of what changed.
+Reason: Why it changed.
+Affects: Who or what is affected.
+================================================================================
+
+[BUILD] Configured root Justfile for workspace automation.
+Reason: User directive to standardize on just rather than makefile.
+Affects: Developers, CI automation.
+
+[PROTOCOL] Implemented EventBus (e-bus) and EventOutsiderBus (eo-bus).
+Reason: User directive to name internal pub/sub EventBus and external bridge EventOutsiderBus.
+Affects: Process 1, Process 2, third-party app bridges.
+
+[VIRTUALIZATION] Configured Linux KVM and QEMU with UEFI OVMF runner script.
+Reason: Verification of hardware boot silence, GOP framebuffer handoff, and audio readiness.
+Affects: Testing pipeline.
+================================================================================

@@ -1,0 +1,11 @@
+TEST: Setup Wizard Step Sequencing
+Condition: System boots for the first time without prior configuration.
+Expected Outcome: Wizard launches sequentially across 7 screens:
+1. Language & Region
+2. Network (must confirm active connection before advancing)
+3. User Account
+4. Privacy & Telemetry
+5. Display & Accessibility
+6. Migration (optional)
+7. Done (seamless fade transition into desktop session with no reboot).
+Each screen asks exactly one question.

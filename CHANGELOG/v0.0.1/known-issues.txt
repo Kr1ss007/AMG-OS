@@ -1,0 +1,10 @@
+AMGOS v0.0.1 Known Issues
+================================================================================
+1. AMD GPU support:
+   Currently deferred. Initial testing is locked to NVIDIA discrete GPUs (RTX 3050 series)
+   with dedicated hardware MUX switch.
+   Workaround: Run on reference Intel + NVIDIA discrete configuration or QEMU virtio-vga.
+
+2. Third-party icon and cursor packs:
+   Selection is pending final curation from established open-source icon sets.
+================================================================================

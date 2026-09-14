@@ -1,0 +1,3 @@
+TEST: Boot Chime Synchronization
+Condition: Audio hardware initializes via AVM in Process 1 during system startup.
+Expected Outcome: Boot chime (F3 piano, 174.61 Hz, 1500 ms) fires exactly once when audio hardware readiness is confirmed, precisely synchronized with the AMG-OS wordmark appearing on screen. Never fires on a timer.

@@ -1,0 +1,113 @@
+================================================================================
+AMGOS — A MULTI-PURPOSE GENERAL OPERATING SYSTEM
+SESSION LOG
+================================================================================
+
+DATE AND SESSION NUMBER
+Date:           September 14, 2026
+Session:        2 of 2 (this day)
+File:           session-002-14-09-2026.txt
+Participants:   Project lead + AI agent (Antigravity)
+Type:           Implementation session — Monorepo setup, Rust toolchain, Linux KVM/QEMU, Production Crates
+
+GOAL
+Construct the complete professional monorepo structure specified in AMGOS_GIT_STRUCTURE_v0.0.1.txt.
+Install system dependencies, Rust toolchain, and Linux KVM/QEMU virtualization environment with UEFI OVMF.
+Implement real production Rust code across all 11 workspace packages with zero stubs, zero mocks, and zero placeholder code.
+Configure Justfile build driver and verify compile correctness and test execution across the entire workspace.
+
+WORK DONE
+1. System Packages and Tooling Installed:
+   Installed qemu-system-x86 (8.2.2), ovmf UEFI firmware (OVMF_CODE_4M.fd), cpu-checker (kvm-ok),
+   libvirt-daemon-system, build-essential, pkg-config, and just.
+   Added user raven1zed to kvm and libvirt groups.
+   Verified hardware virtualization VT-x on host Intel Core i5-13420H.
+
+2. Rust Toolchain Configured:
+   Installed stable Rust toolchain (rustc 1.98.1, cargo 1.98.1) via rustup.
+   Configured root workspace Cargo.toml with 11 packages and shared dependencies.
+
+3. Implemented All 11 Real Production Crates:
+   - amgos-protocol:
+     * EventBus (e-bus): Binary framing protocol (magic bytes, version, sequence IDs, Fletcher checksums).
+     * Typed contracts: SystemEvent and DesktopRequest strictly preserving the two-process boundary.
+     * Unix domain socket transport: EventBusClient and EventBusServer.
+     * EventOutsiderBus (eo-bus): D-Bus bridging contracts for third-party applications.
+   - amgos-system (Process 1):
+     * Service supervisor, hardware detection (/proc, /sys), network credential vault,
+       power manager, Audio-Video Manager (AVM with 174.61 Hz F3 boot chime sequencer and ducking),
+       Astrophage rolling logger (10,000 entries), and signed configuration permission manager.
+   - amgos-desktop (Process 2):
+     * Animation and Interface Engine with Newton-Raphson cubic-bezier solver and standard curves.
+     * Top Global Menu bar with Space Orange (#FF5500) sharp identity mark.
+     * Window chrome traffic lights with proximity hover reveal.
+     * Setup wizard 7-step sequencer, lockscreen state, and shutdown ("goodbye") / restart ("i'll see you in a bit") renderers.
+   - filer (Primary App):
+     * filer-protocol: Contract between core and shell.
+     * filer-core (Process 1): File system indexing, tokenized ranked Pathfinder search index,
+       multi-format package inspector (.deb, .flatpak, .appimage, .snap with SHA-256 digests), download staging.
+     * filer-shell (Process 2): Pathfinder search bar UI state, Zen Browser embed container,
+       file navigation panels, and symmetric install/uninstall dialogs.
+   - astrophage (Diagnostic App):
+     * astrophage-protocol: Telemetry records and GitHub issue markdown format.
+     * astrophage-core (Process 1): Rolling event buffer and system metric monitor.
+     * astrophage-shell (Process 2): Diagnostic report builder with personal data scrubbing.
+   - terminow (Terminal Emulator):
+     * POSIX PTY allocation (openpty, ioctl TIOCSWINSZ), character grid buffer, JetBrains Mono font configuration.
+   - settings (Settings App):
+     * Topic-based configuration model and OTA update controller with A/B swap coordination.
+
+4. Virtualization & Build Scripts:
+   Created scripts/run-qemu.sh with KVM acceleration, OVMF UEFI firmware, 4 vCPUs, 4GB RAM, and virtio devices.
+   Created scripts/build.sh, scripts/test.sh, scripts/sign.sh, and scripts/delta.sh.
+   Created root Justfile providing check, build, test, run-system, run-desktop, run-qemu, and clean targets.
+
+5. Test Execution:
+   Ran just check and cargo test --workspace.
+   All 11 packages compiled cleanly. All unit tests passed with zero failures and zero warnings.
+   Executed scripts/run-qemu.sh --test; passed with KVM hardware acceleration and OVMF.
+
+DECISIONS MADE
+1. Internal IPC named EventBus (e-bus), external D-Bus bridge named EventOutsiderBus (eo-bus).
+2. just configured as the workspace build driver via root Justfile.
+3. Session files standardized to session-NNN-DD-MM-YYYY.txt in SESSIONS/.
+4. Absolute zero-mock standard strictly enforced: all crates built with functional Rust types,
+   real socket networking, real serialization, real SHA-256 calculation, and real mathematical solvers.
+
+WHAT WORKED
+- Hardware KVM acceleration and UEFI OVMF verified cleanly on the host CPU.
+- Rust 1.98.1 toolchain compiled the 11-member workspace without any linking or edition conflicts.
+- Newton-Raphson cubic-bezier solver verified monotonic progress across [0.0, 1.0].
+- e-bus Unix domain socket pub/sub round-trip unit test passed.
+- QEMU headless test verified UEFI GOP firmware initialization under KVM.
+
+WHAT DID NOT WORK
+- Initial bincode v3.0.0 download contained an upstream compile error; pinned to stable bincode v1.3.3.
+- AstrophageRecord initially derived Eq with an f64 field; corrected to PartialEq to satisfy Rust float equality rules.
+
+OPEN QUESTIONS
+- Specific icon pack and cursor pack selection (sourced, not generated).
+- Zen Browser embed depth (GeckoView vs shell embed).
+
+ARTIFACTS
+- Cargo.toml (root workspace)
+- Justfile (workspace task runner)
+- .gitignore
+- amgos-protocol/ (ebus/, eobus/, Cargo.toml, README.txt)
+- amgos-system/ (src/, Cargo.toml, README.txt)
+- amgos-desktop/ (src/, Cargo.toml, README.txt)
+- filer/ (core/, shell/, protocol/, README.txt)
+- astrophage/ (core/, shell/, protocol/, README.txt)
+- terminow/ (src/, Cargo.toml, README.txt)
+- settings/ (src/, Cargo.toml, README.txt)
+- FORKS/ (zen/, cosmic/, zen-delta.txt, cosmic-delta.txt)
+- SESSIONS/ (session-001-14-09-2026.txt, session-002-14-09-2026.txt, README.txt)
+- scripts/ (run-qemu.sh, build.sh, test.sh, sign.sh, delta.sh)
+
+NEXT SESSION
+Proceed with Filer core filesystem inotify integration and Pathfinder query scoring optimizations.
+================================================================================
+END OF SESSION LOG
+Session 2 — September 14, 2026
+AMGOS v0.0.1 Pre-Production Alpha — Upstream Color
+================================================================================

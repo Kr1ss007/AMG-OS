@@ -1,0 +1,3 @@
+TEST: Multi-Format Package Inspection and Symmetric Installation
+Condition: Packages (.deb, .flatpak, .appimage, .snap) are discovered, downloaded, inspected, installed, and uninstalled.
+Expected Outcome: Inspection report displays declared permissions and SHA-256 digest accurately. Installation writes strictly to the writable app layer partition. Uninstallation removes all files cleanly with zero residual state.

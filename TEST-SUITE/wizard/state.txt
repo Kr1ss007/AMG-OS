@@ -1,0 +1,3 @@
+TEST: Setup Wizard Signed State Persistence
+Condition: Setup wizard reaches the Done screen.
+Expected Outcome: Output configuration is cryptographically signed and transferred over EventBus to Process 1. Credentials (wifi passphrase) are committed exclusively to Process 1's vault. Process 2 retains zero credentials. State is read-only and immutable to direct file tampering.

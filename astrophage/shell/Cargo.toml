@@ -1,0 +1,12 @@
+[package]
+name = "astrophage-shell"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+astrophage-protocol = { path = "../protocol" }
+amgos-protocol = { path = "../../amgos-protocol" }
+serde = { workspace = true }
+bincode = { workspace = true }

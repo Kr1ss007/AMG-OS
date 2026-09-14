@@ -1,0 +1,11 @@
+[package]
+name = "filer-protocol"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+amgos-protocol = { path = "../../amgos-protocol" }
+serde = { workspace = true }
+bincode = { workspace = true }

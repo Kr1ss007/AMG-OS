@@ -1,0 +1,15 @@
+================================================================================
+AMGOS — ZEN BROWSER FORK DELTA LOG
+Status: Active tracking
+================================================================================
+
+Every divergence from upstream Zen Browser must be recorded here.
+Gecko security updates are pulled on an emergency cadence.
+Divergences are restricted to layers above the engine.
+
+DIVERGENCES:
+1. D-Bus Global Menu export implementation (org.amgos.GlobalMenu).
+2. MotionWave touchpad gesture binding (4-finger swipe -> tab switch).
+3. Cubic-bezier animation timing constants matching AMGOS curves.
+4. Download interceptor routing installable packages (.deb, .flatpak, .appimage, .snap) directly to Process 1 Filer core.
+================================================================================

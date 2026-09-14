@@ -1,0 +1,3 @@
+TEST: Pure Wayland Environment
+Condition: Applications request display surfaces from the compositor.
+Expected Outcome: Wayland surfaces render properly. Any X11 or XWayland connection attempts are cleanly rejected (X11 is not installed).
