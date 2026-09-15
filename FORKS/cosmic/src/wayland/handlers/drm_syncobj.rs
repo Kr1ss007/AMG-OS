@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::state::{BackendData, State};
-use smithay::wayland::drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState};
+use smithay::{
+    delegate_drm_syncobj,
+    wayland::drm_syncobj::{DrmSyncobjHandler, DrmSyncobjState},
+};
 
 impl DrmSyncobjHandler for State {
     fn drm_syncobj_state(&mut self) -> Option<&mut DrmSyncobjState> {
@@ -12,3 +15,5 @@ impl DrmSyncobjHandler for State {
         kms.syncobj_state.as_mut()
     }
 }
+
+delegate_drm_syncobj!(State);

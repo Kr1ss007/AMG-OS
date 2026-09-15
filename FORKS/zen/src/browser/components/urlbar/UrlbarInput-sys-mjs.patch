@@ -1,0 +1,165 @@
+diff --git a/browser/components/urlbar/UrlbarInput.sys.mjs b/browser/components/urlbar/UrlbarInput.sys.mjs
+index 02c328f0d0724b0cf95c820fe49a43e94a97b3c2..30387bf4f128fdc1d687ee4f6c5a51eb0bee29ea 100644
+--- a/browser/components/urlbar/UrlbarInput.sys.mjs
++++ b/browser/components/urlbar/UrlbarInput.sys.mjs
+@@ -67,6 +67,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
+   false
+ );
+ 
++XPCOMUtils.defineLazyPreferenceGetter(
++  lazy,
++  "ZEN_URLBAR_BEHAVIOR",
++  "zen.urlbar.behavior",
++  'default'
++);
++
+ const DEFAULT_FORM_HISTORY_NAME = "searchbar-history";
+ const SEARCH_BUTTON_CLASS = "urlbar-search-button";
+ 
+@@ -349,7 +356,11 @@ export class UrlbarInput {
+     // See _on_select().  HTMLInputElement.select() dispatches a "select"
+     // event but does not set the primary selection.
+     this._suppressPrimaryAdjustment = true;
++    this.document.getElementById("navigator-toolbox").setAttribute("supress-primary-adjustment", !this.document.getElementById("navigator-toolbox").hasAttribute("zen-has-hover"));
+     this.inputField.select();
++    this.document.ownerGlobal.setTimeout(() => {
++      this.document.getElementById("navigator-toolbox").removeAttribute("supress-primary-adjustment");
++    }, 100);
+     this._suppressPrimaryAdjustment = false;
+   }
+ 
+@@ -425,6 +436,10 @@ export class UrlbarInput {
+     hideSearchTerms = false,
+     isSameDocument = false
+   ) {
++    if (this.hasAttribute("zen-newtab")) {
++      return;
++    }
++
+     // We only need to update the searchModeUI on tab switch conditionally
+     // as we only persist searchMode with ScotchBonnet enabled.
+     if (
+@@ -698,8 +713,11 @@ export class UrlbarInput {
+         return;
+       }
+     }
+-
++    this.document.getElementById("navigator-toolbox").setAttribute("supress-primary-adjustment", !this.document.getElementById("navigator-toolbox").hasAttribute("zen-has-hover"));
+     this.handleNavigation({ event });
++    this.document.ownerGlobal.setTimeout(() => {
++      this.document.getElementById("navigator-toolbox").removeAttribute("supress-primary-adjustment");
++    }, 200);
+   }
+ 
+   /**
+@@ -1098,7 +1116,11 @@ export class UrlbarInput {
+     }
+ 
+     if (!this.#providesSearchMode(result)) {
+-      this.view.close({ elementPicked: true });
++      if (this._zenHandleUrlbarClose) {
++        this._zenHandleUrlbarClose(true);
++      } else {
++        this.view.close({ elementPicked: true });
++      }
+     }
+ 
+     this.controller.recordSelectedResult(event, result);
+@@ -2157,6 +2179,11 @@ export class UrlbarInput {
+ 
+     this.setAttribute("breakout-extend", "true");
+ 
++    if (lazy.ZEN_URLBAR_BEHAVIOR == 'float' || (lazy.ZEN_URLBAR_BEHAVIOR == 'floating-on-type' && !this.focusedViaMousedown)) {
++      this.setAttribute("zen-floating-urlbar", "true");
++    } else {
++      this.removeAttribute("zen-floating-urlbar");
++    }
+     // Enable the animation only after the first extend call to ensure it
+     // doesn't run when opening a new window.
+     if (!this.hasAttribute("breakout-extend-animate")) {
+@@ -2176,6 +2203,11 @@ export class UrlbarInput {
+       return;
+     }
+ 
++    if (this._zenHandleUrlbarClose) {
++      this._zenHandleUrlbarClose();
++    }
++    this.removeAttribute("zen-floating-urlbar");
++
+     this.removeAttribute("breakout-extend");
+     this.#updateTextboxPosition();
+   }
+@@ -2998,7 +3030,7 @@ export class UrlbarInput {
+    */
+   _trimValue(val) {
+     let trimmedValue = lazy.UrlbarPrefs.get("trimURLs")
+-      ? lazy.BrowserUIUtils.trimURL(val)
++      ? this._zenTrimURL(val)
+       : val;
+     // Only trim value if the directionality doesn't change to RTL and we're not
+     // showing a strikeout https protocol.
+@@ -3365,7 +3397,7 @@ export class UrlbarInput {
+     } else {
+       where = lazy.BrowserUtils.whereToOpenLink(event, false, false);
+     }
+-    if (lazy.UrlbarPrefs.get("openintab")) {
++    if (lazy.UrlbarPrefs.get("openintab") || this.hasAttribute("zen-newtab")) {
+       if (where == "current") {
+         where = "tab";
+       } else if (where == "tab") {
+@@ -3380,6 +3412,9 @@ export class UrlbarInput {
+     ) {
+       where = "current";
+     }
++    if (this.window.gBrowser.selectedTab.hasAttribute("zen-empty-tab")) {
++      return "tab"; // Always open in a new tab if the current tab is "our empty tab".
++    }
+     return where;
+   }
+ 
+@@ -3921,6 +3956,11 @@ export class UrlbarInput {
+   }
+ 
+   _on_click(event) {
++    if (lazy.ZEN_URLBAR_BEHAVIOR === 'float' && event.target == this.inputField) {
++      event.zenOriginalTarget = this.textbox;
++      this._on_mousedown(event);
++    }
++
+     if (
+       event.target == this.inputField ||
+       event.target == this._inputContainer ||
+@@ -3992,7 +4032,7 @@ export class UrlbarInput {
+       }
+     }
+ 
+-    if (this.focusedViaMousedown) {
++    if (this.focusedViaMousedown || this.hasAttribute("zen-newtab")) {
+       this.view.autoOpen({ event });
+     } else {
+       if (this._untrimOnFocusAfterKeydown) {
+@@ -4032,9 +4072,12 @@ export class UrlbarInput {
+   }
+ 
+   _on_mousedown(event) {
+-    switch (event.currentTarget) {
++    switch (event.zenOriginalTarget || event.currentTarget) {
+       case this.textbox: {
+         this._mousedownOnUrlbarDescendant = true;
++        if (event.type != "click" && lazy.ZEN_URLBAR_BEHAVIOR === 'float') {
++          return true;
++        }
+ 
+         if (
+           event.target != this.inputField &&
+@@ -4044,8 +4087,8 @@ export class UrlbarInput {
+           break;
+         }
+ 
+-        this.focusedViaMousedown = !this.focused;
+-        this._preventClickSelectsAll = this.focused;
++        this.focusedViaMousedown = !(lazy.ZEN_URLBAR_BEHAVIOR === 'default' ? this.focused : this.hasAttribute("breakout-extend"));
++        this._preventClickSelectsAll = lazy.ZEN_URLBAR_BEHAVIOR === 'default' ? this.focused : this.hasAttribute("breakout-extend");
+ 
+         // Keep the focus status, since the attribute may be changed
+         // upon calling this.focus().

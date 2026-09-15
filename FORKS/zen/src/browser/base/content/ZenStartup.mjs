@@ -1,0 +1,145 @@
+{
+  var ZenStartup = {
+    init() {
+      this.openWatermark();
+      this._changeSidebarLocation();
+      this._zenInitBrowserLayout();
+      this._initSearchBar();
+    },
+
+    _zenInitBrowserLayout() {
+      if (this.__hasInitBrowserLayout) return;
+      this.__hasInitBrowserLayout = true;
+      try {
+        console.info('ZenThemeModifier: init browser layout');
+        const kNavbarItems = ['nav-bar', 'PersonalToolbar'];
+        const kNewContainerId = 'zen-appcontent-navbar-container';
+        let newContainer = document.getElementById(kNewContainerId);
+        for (let id of kNavbarItems) {
+          const node = document.getElementById(id);
+          console.assert(node, 'Could not find node with id: ' + id);
+          if (!node) continue;
+          newContainer.appendChild(node);
+        }
+
+        // Fix notification deck
+        const deckTemplate = document.getElementById('tab-notification-deck-template');
+        if (deckTemplate) {
+          document.getElementById('zen-appcontent-navbar-container').appendChild(deckTemplate);
+        }
+
+        this._initSidebarScrolling();
+
+        gZenCompactModeManager.init();
+        ZenWorkspaces.init();
+        gZenVerticalTabsManager.init();
+        gZenUIManager.init();
+
+        this._checkForWelcomePage();
+
+        document.l10n.setAttributes(document.getElementById('tabs-newtab-button'), 'tabs-toolbar-new-tab');
+      } catch (e) {
+        console.error('ZenThemeModifier: Error initializing browser layout', e);
+      }
+      ZenWorkspaces.promiseInitialized.then(() => {
+        this.closeWatermark();
+      });
+    },
+
+    openWatermark() {
+      if (!Services.prefs.getBoolPref('zen.watermark.enabled', false)) {
+        return;
+      }
+      for (let elem of document.querySelectorAll('#browser > *, #urlbar')) {
+        elem.style.opacity = 0;
+      }
+    },
+
+    closeWatermark() {
+      document.documentElement.removeAttribute('zen-before-loaded');
+      if (Services.prefs.getBoolPref('zen.watermark.enabled', false)) {
+        gZenUIManager.motion
+          .animate(
+            '#browser > *, #urlbar, #tabbrowser-tabbox > *',
+            {
+              opacity: [0, 1],
+            },
+            {
+              delay: 0.6,
+              easing: 'ease-in-out',
+            }
+          )
+          .then(() => {
+            for (let elem of document.querySelectorAll('#browser > *, #urlbar, #tabbrowser-tabbox > *')) {
+              elem.style.removeProperty('opacity');
+            }
+          });
+      }
+    },
+
+    _changeSidebarLocation() {
+      const kElementsToAppend = ['sidebar-splitter', 'sidebar-box'];
+      const appWrapepr = document.getElementById('zen-sidebar-box-container');
+      appWrapepr.setAttribute('hidden', 'true');
+
+      const browser = document.getElementById('browser');
+      const toolbox = document.getElementById('navigator-toolbox');
+      browser.prepend(toolbox);
+
+      const sidebarPanelWrapper = document.getElementById('tabbrowser-tabbox');
+      for (let id of kElementsToAppend) {
+        const elem = document.getElementById(id);
+        if (elem) {
+          sidebarPanelWrapper.prepend(elem);
+        }
+      }
+    },
+
+    _initSidebarScrolling() {
+      // Disable smooth scroll
+      const canSmoothScroll = Services.prefs.getBoolPref('zen.startup.smooth-scroll-in-tabs', false);
+      const tabsWrapper = document.getElementById('zen-tabs-wrapper');
+      gBrowser.tabContainer.addEventListener('wheel', (event) => {
+        if (canSmoothScroll) return;
+        event.preventDefault(); // Prevent the smooth scroll behavior
+        gBrowser.tabContainer.scrollTop += event.deltaY * 20; // Apply immediate scroll
+      });
+      // Detect overflow and underflow
+      const observer = new ResizeObserver((_) => {
+        const tabContainer = gBrowser.tabContainer;
+        // const isVertical = tabContainer.getAttribute('orient') === 'vertical';
+        // let contentSize = tabsWrapper.getBoundingClientRect()[isVertical ? 'height' : 'width'];
+        // NOTE: This should be contentSize > scrollClientSize, but due
+        // to how Gecko internally rounds in those cases, we allow for some
+        // minor differences (the internal Gecko layout size is 1/60th of a
+        // pixel, so 0.02 should cover it).
+        //let overflowing = contentSize - tabContainer.arrowScrollbox.scrollClientSize > 0.02;
+        let overflowing = true; // cheatign the system, because we want to always show make the element overflowing
+
+        window.requestAnimationFrame(() => {
+          tabContainer.arrowScrollbox.toggleAttribute('overflowing', overflowing);
+          tabContainer.arrowScrollbox.dispatchEvent(new CustomEvent(overflowing ? 'overflow' : 'underflow'));
+        });
+      });
+      observer.observe(tabsWrapper);
+    },
+
+    _initSearchBar() {
+      // Only focus the url bar
+      gURLBar.focus();
+
+      gURLBar._initCopyCutController();
+      gURLBar._initPasteAndGo();
+      gURLBar._initStripOnShare();
+    },
+
+    _checkForWelcomePage() {
+      if (!Services.prefs.getBoolPref('zen.welcome-screen.seen', false)) {
+        Services.prefs.setBoolPref('zen.welcome-screen.seen', true);
+        Services.scriptloader.loadSubScript('chrome://browser/content/zen-components/ZenWelcome.mjs', window);
+      }
+    },
+  };
+
+  ZenStartup.init();
+}

@@ -1,39 +1,12 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 set -xe
 
 if command -v apt-get &> /dev/null; then
-  sudo apt-get install python3-launchpadlib
+  sudo add-apt-repository ppa:kisak/kisak-mesa
   sudo apt-get update
   sudo apt-get install -y xvfb libnvidia-egl-wayland1 mesa-utils libgl1-mesa-dri
 fi
-
-if ! test "$ZEN_CROSS_COMPILING" && test "$(uname -s)" = "Linux"; then
-  if test -d "$HOME/.mozbuild/clang/bin"; then
-      export CC="$HOME/.mozbuild/clang/bin/clang"
-      export CXX="$HOME/.mozbuild/clang/bin/clang++"
-  else
-      export CC=clang
-      export CXX=clang++
-  fi
-fi
-
-mkdir -p ~/.zen-keys
-if test "$ZEN_SAFEBROWSING_API_KEY"; then
-  echo "$ZEN_SAFEBROWSING_API_KEY" > ~/.zen-keys/safebrowsing.dat
-fi
-
-if test "$ZEN_MOZILLA_API_KEY"; then
-  echo "$ZEN_MOZILLA_API_KEY" > ~/.zen-keys/mozilla.dat
-fi
-
-if test "$ZEN_GOOGLE_LOCATION_SERVICE_API_KEY"; then
-  echo "$ZEN_GOOGLE_LOCATION_SERVICE_API_KEY" > ~/.zen-keys/google_location_service.dat
-fi
-
-. $HOME/.cargo/env
-
-bash ./scripts/mar_sign.sh -i
 
 ulimit -n 4096
 
@@ -53,6 +26,3 @@ else
   export ZEN_RELEASE=1
   npm run build
 fi
-
-echo "Build complete, removing API keys"
-rm -rf ~/.zen-keys

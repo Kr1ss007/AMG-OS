@@ -32,7 +32,7 @@ pub fn is_dialog(window: &CosmicSurface) -> bool {
         }
         WindowSurface::X11(surface) => {
             if surface.is_override_redirect()
-                || surface.is_modal()
+                || surface.is_popup()
                 || !matches!(
                     surface.window_type(),
                     None | Some(WmWindowType::Normal) | Some(WmWindowType::Utility)

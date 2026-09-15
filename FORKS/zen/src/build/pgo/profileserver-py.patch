@@ -1,8 +1,8 @@
 diff --git a/build/pgo/profileserver.py b/build/pgo/profileserver.py
-index b11171e3ef14b1f2c4a279b10d83eb4dadde45ca..fdf7c2d5ad6352bdd8f2ea20ee80c0927daa2ba2 100755
+index 31556cc9ae1a44a04e300083f7be4dc908cc3794..23ef1d8f5b30068ffdddc3c9cb6cd45e64d93071 100755
 --- a/build/pgo/profileserver.py
 +++ b/build/pgo/profileserver.py
-@@ -17,7 +17,13 @@ from mozprofile import FirefoxProfile, Preferences
+@@ -18,7 +18,13 @@ from mozprofile import FirefoxProfile, Preferences
  from mozprofile.permissions import ServerLocations
  from mozrunner import CLI, FirefoxRunner
  

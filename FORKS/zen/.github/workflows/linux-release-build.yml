@@ -4,41 +4,32 @@ on:
   workflow_call:
     inputs:
       build-version:
-        description: "The version to build"
+        description: 'The version to build'
         required: true
         type: string
       release-branch:
-        description: "The branch to build"
+        description: 'The branch to build'
         required: true
         type: string
       MOZ_BUILD_DATE:
         type: string
         required: true
-        default: ""
-      use-sccache:
-        description: "Use sccache"
-        required: true
-        type: boolean
-        default: false
-      disable-pgo:
-        description: "Build without PGO at all"
-        required: false
-        type: boolean
-        default: false
+        default: ''
 
 jobs:
   build-linux:
     permissions:
       contents: write
     # aarch64 does not need full 16x
-    runs-on: ${{ (inputs.release-branch == 'release' && matrix.arch == 'x86_64') && 'self-hosted' || 'blacksmith-8vcpu-ubuntu-2404' }}
+    runs-on: ${{ (inputs.release-branch == 'release' && matrix.arch == 'x86_64') && 'self-hosted' || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         arch: [x86_64, aarch64]
     env:
-      SCCACHE_GHA_ENABLED: ${{ inputs.use-sccache && 'true' || 'false' }}
+      SCCACHE_GHA_ENABLED: 'true'
       CARGO_TERM_COLOR: always
+      RUSTC_WRAPPER: 'sccache'
       CARGO_INCREMENTAL: 0
     name: Build Linux - ${{ matrix.arch }}
 
@@ -48,6 +39,10 @@ jobs:
         with:
           tool-cache: false
 
+      # Bug: https://github.com/actions/checkout/issues/1153
+      - name: Remove zombie lock file
+        run: rm -f /home/ubuntu/actions-runner/_work/desktop/desktop/.git/modules/l10n/index.lock
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -55,13 +50,12 @@ jobs:
           token: ${{ secrets.DEPLOY_KEY }}
 
       - name: Setup Node.js
-        uses: useblacksmith/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: '.nvmrc'
 
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@main
-        if: ${{ inputs.use-sccache }}
         with:
           disable_annotations: true
 
@@ -74,8 +68,8 @@ jobs:
 
       - name: Setup Git
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.email "mauro-balades@users.noreply.github.com"
+          git config --global user.name "mauro-balades"
 
       - name: Install system dependencies
         run: |
@@ -86,7 +80,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          npm ci
+          npm install
 
       - name: Load Surfer CI setup
         run: npm run surfer -- ci --brand ${{ inputs.release-branch }} --display-version ${{ inputs.build-version }}
@@ -96,7 +90,8 @@ jobs:
 
       - name: Fix Rust version
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain $(cat .rust-toolchain)
+          # Install a rust version compatible with LLVM 18
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.79
           source $HOME/.cargo/env
 
           if test "${{ matrix.arch }}" = "aarch64"; then
@@ -108,13 +103,7 @@ jobs:
       - name: Import
         env:
           SURFER_COMPAT: ${{ matrix.arch }}
-          SURFER_CERT_PATCH_ISSUER: ${{ secrets.SURFER_CERT_PATCH_ISSUER }}
-          SURFER_CERT_PATCH_NAME: ${{ secrets.SURFER_CERT_PATCH_NAME }}
-          SURFER_CERT_PATCH_NAME_PREV: ${{ secrets.SURFER_CERT_PATCH_NAME_PREV }}
-          SURFER_CERT_PATCH_ISSUER_PREV: ${{ secrets.SURFER_CERT_PATCH_ISSUER_PREV }}
-        run: |
-          . "$HOME/.cargo/env"
-          npm run import
+        run: npm run import
 
       - name: Build language packs
         run: sh scripts/download-language-packs.sh
@@ -126,46 +115,10 @@ jobs:
           ./mach --no-interactive bootstrap --application-choice browser
           cd ..
 
-      - name: Build (PGO stage 1 - generate)
-        if: ${{ matrix.arch == 'x86_64' && !inputs.disable-pgo }}
-        env:
-          SURFER_COMPAT: ${{ matrix.arch }}
-          ZEN_RELEASE_BRANCH: ${{ inputs.release-branch }}
-          ZEN_GA_GENERATE_PROFILE: 1
-          ZEN_SAFEBROWSING_API_KEY: ${{ secrets.ZEN_SAFEBROWSING_API_KEY }}
-          ZEN_MOZILLA_API_KEY: ${{ secrets.ZEN_MOZILLA_API_KEY }}
-          ZEN_GOOGLE_LOCATION_SERVICE_API_KEY: ${{ secrets.ZEN_GOOGLE_LOCATION_SERVICE_API_KEY }}
-        continue-on-error: true
-        run: |
-          export SURFER_PLATFORM="linux"
-          if [[ -n ${{ inputs.MOZ_BUILD_DATE }} ]];then
-            export MOZ_BUILD_DATE=${{ inputs.MOZ_BUILD_DATE }}
-          fi
-          bash .github/workflows/src/release-build.sh
-
-      - name: Generate PGO profile data
-        if: ${{ matrix.arch == 'x86_64' && !inputs.disable-pgo }}
-        run: |
-          set -x
-          export DISPLAY=:2
-          export LLVM_PROFDATA="$HOME/.mozbuild/clang/bin/llvm-profdata"
-          export JARLOG_FILE=en-US.log
-          mkdir -p "$HOME/artifact"
-          cd engine
-          ./mach python ../scripts/download_pgo_extended_corpus.py
-          ./mach package
-          ./mach python build/pgo/profileserver.py --extended-corpus ./pgo-extended-corpus
-          mv merged.profdata "$HOME/artifact/merged.profdata"
-          mv en-US.log "$HOME/artifact/en-US.log"
-
       - name: Build
         env:
           SURFER_COMPAT: ${{ matrix.arch }}
           ZEN_RELEASE_BRANCH: ${{ inputs.release-branch }}
-          ZEN_GA_DISABLE_PGO: ${{ inputs.disable-pgo && '1' || '' }}
-          ZEN_SAFEBROWSING_API_KEY: ${{ secrets.ZEN_SAFEBROWSING_API_KEY }}
-          ZEN_MOZILLA_API_KEY: ${{ secrets.ZEN_MOZILLA_API_KEY }}
-          ZEN_GOOGLE_LOCATION_SERVICE_API_KEY: ${{ secrets.ZEN_GOOGLE_LOCATION_SERVICE_API_KEY }}
         continue-on-error: true
         run: |
           export SURFER_PLATFORM="linux"
@@ -208,11 +161,3 @@ jobs:
           retention-days: 5
           name: linux_update_manifest_${{ matrix.arch }}
           path: ./dist/update
-
-      - name: Upload linux bin
-        if: ${{ matrix.arch == 'x86_64' }}
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 2
-          name: linux-bin-x86_64
-          path: engine/obj-x86_64-pc-linux-gnu/dist/bin/

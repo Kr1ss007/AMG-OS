@@ -1,8 +1,8 @@
 diff --git a/toolkit/modules/LightweightThemeConsumer.sys.mjs b/toolkit/modules/LightweightThemeConsumer.sys.mjs
-index 756cf47d4dd5e096af96a95ab63c20ac9348572b..a74c1ffd73c19ee54ed87318d97898d93b974ea7 100644
+index 0d3993370b4ecbdfaf87cfd3145617343c29dc39..8587f7286476ca0dcce1bb02ef02ce0dae9c4df7 100644
 --- a/toolkit/modules/LightweightThemeConsumer.sys.mjs
 +++ b/toolkit/modules/LightweightThemeConsumer.sys.mjs
-@@ -34,7 +34,7 @@ const toolkitVariableMap = [
+@@ -32,7 +32,7 @@ const toolkitVariableMap = [
        lwtProperty: "accentcolor",
        processColor(rgbaChannels) {
          if (!rgbaChannels || rgbaChannels.a == 0) {
@@ -11,12 +11,26 @@ index 756cf47d4dd5e096af96a95ab63c20ac9348572b..a74c1ffd73c19ee54ed87318d97898d9
          }
          // Remove the alpha channel
          const { r, g, b } = rgbaChannels;
-@@ -366,7 +366,7 @@ LightweightThemeConsumer.prototype = {
-     let forcedColorsThemeOverride =
-       this.FORCED_COLORS_OVERRIDE_ENABLED &&
-       this.forcedColorsMediaQuery?.matches;
--    if (!theme || forcedColorsThemeOverride) {
-+    if (!theme || forcedColorsThemeOverride || Services.prefs.getBoolPref("zen.theme.disable-lightweight")) {
-       theme = { id: DEFAULT_THEME_ID };
+@@ -334,6 +334,7 @@ LightweightThemeConsumer.prototype = {
+       theme.additionalBackgrounds
+     );
+     let _processedColors = _setProperties(root, hasTheme, theme);
++    this._zenSetAccentColor(root);
+ 
+     if (hasTheme) {
+       if (updateGlobalThemeData) {
+@@ -425,6 +426,14 @@ LightweightThemeConsumer.prototype = {
+       this._lastExperimentData.stylesheet = stylesheet;
      }
-     let builtinThemeConfig = lazy.BuiltInThemeConfig.get(theme.id);
+   },
++
++  _zenSetAccentColor(root) {
++    const themeAccent = Services.prefs.getStringPref(
++      "zen.theme.accent-color",
++      "#0b57d0"
++    );
++    root.style.setProperty("--zen-primary-color", themeAccent);
++  },
+ };
+ 
+ function _getContentProperties(doc, hasTheme, data) {

@@ -1,37 +1,31 @@
 use super::tab::{MIN_ACTIVE_TAB_WIDTH, Tab, TabBackgroundTheme, TabMessage, TabRuleTheme};
 use cosmic::{
     Apply,
-    iced::{
-        Element,
-        core::{
-            Background, Border, Clipboard, Color, Length, Point, Rectangle, Renderer, Shell, Size,
-            Vector, event,
-            layout::{Layout, Limits, Node},
-            mouse, overlay, renderer,
-            widget::{
-                Widget,
-                operation::{
-                    Operation, Scrollable,
-                    scrollable::{AbsoluteOffset, RelativeOffset},
-                },
-                tree::{self, Tree},
-            },
-        },
-        id::Id,
+    iced::{Element, id::Id, widget},
+    iced_core::{
+        Background, Border, Clipboard, Color, Length, Point, Rectangle, Renderer, Shell, Size,
+        Vector, event,
+        layout::{Layout, Limits, Node},
+        mouse, overlay, renderer,
         widget::{
-            self,
-            container::{Catalog, draw_background},
+            Widget,
+            operation::{
+                Operation, Scrollable,
+                scrollable::{AbsoluteOffset, RelativeOffset},
+            },
+            tree::{self, Tree},
         },
     },
+    iced_widget::container::draw_background,
     theme,
-    widget::icon::from_name,
+    widget::{container::Catalog, icon::from_name},
 };
 use keyframe::{
     ease,
     functions::{EaseInOutCubic, EaseOutCubic},
 };
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -70,12 +64,12 @@ pub struct State {
 }
 
 impl Scrollable for State {
-    fn snap_to(&mut self, offset: RelativeOffset<Option<f32>>) {
-        self.offset_x = Offset::Relative(offset.x.unwrap_or(0.0).clamp(0.0, 1.0));
+    fn snap_to(&mut self, offset: RelativeOffset) {
+        self.offset_x = Offset::Relative(offset.x.clamp(0.0, 1.0));
     }
 
-    fn scroll_to(&mut self, offset: AbsoluteOffset<Option<f32>>) {
-        let new_offset = Offset::Absolute(offset.x.unwrap_or(0.0).max(0.0));
+    fn scroll_to(&mut self, offset: AbsoluteOffset) {
+        let new_offset = Offset::Absolute(offset.x.max(0.0));
         self.scroll_animation = Some(ScrollAnimationState {
             start_time: Instant::now(),
             start: self.offset_x,
@@ -165,7 +159,7 @@ where
             Element::new(tab.internal(i))
         });
 
-        let tabs_rule = widget::rule::vertical(4).class(if tabs.len() - 1 == active {
+        let tabs_rule = widget::vertical_rule(4).class(if tabs.len() - 1 == active {
             if activated {
                 TabRuleTheme::ActiveActivated
             } else {
@@ -199,12 +193,12 @@ where
 
         let mut elements = Vec::with_capacity(tabs.len() + 5);
 
-        elements.push(widget::rule::vertical(4).class(rule_style).into());
+        elements.push(widget::vertical_rule(4).class(rule_style).into());
         elements.push(prev_button.into());
         elements.extend(tabs);
         elements.push(tabs_rule.into());
         elements.push(next_button.into());
-        elements.push(widget::rule::vertical(4).class(rule_style).into());
+        elements.push(widget::vertical_rule(4).class(rule_style).into());
 
         Tabs {
             elements,
@@ -276,10 +270,10 @@ impl State {
     pub fn cleanup_old_animations(&mut self) {
         let start_time = Instant::now();
 
-        if let Some(animation) = self.scroll_animation.as_ref()
-            && start_time.duration_since(animation.start_time) > SCROLL_ANIMATION_DURATION
-        {
-            self.scroll_animation.take();
+        if let Some(animation) = self.scroll_animation.as_ref() {
+            if start_time.duration_since(animation.start_time) > SCROLL_ANIMATION_DURATION {
+                self.scroll_animation.take();
+            }
         }
 
         Self::discard_expired_tab_animations(&mut self.tab_animations, start_time);
@@ -346,9 +340,9 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    fn layout(&mut self, tree: &mut Tree, renderer: &cosmic::Renderer, limits: &Limits) -> Node {
+    fn layout(&self, tree: &mut Tree, renderer: &cosmic::Renderer, limits: &Limits) -> Node {
         let limits = limits.width(self.width).height(self.height);
-        let element_count = self.elements.len();
+
         // calculate the smallest possible size
         let child_limits = Limits::new(
             Size::new(0.0, limits.min().height),
@@ -357,13 +351,10 @@ where
         .width(Length::Shrink)
         .height(Length::Shrink);
 
-        let mut nodes = self.elements[2..element_count - 2]
-            .iter_mut()
+        let mut nodes = self.elements[2..self.elements.len() - 2]
+            .iter()
             .zip(tree.children.iter_mut().skip(2))
-            .map(|(tab, tab_tree)| {
-                tab.as_widget_mut()
-                    .layout(tab_tree, renderer, &child_limits)
-            })
+            .map(|(tab, tab_tree)| tab.as_widget().layout(tab_tree, renderer, &child_limits))
             .collect::<Vec<_>>();
 
         // sum up
@@ -379,14 +370,13 @@ where
         if min_size.width <= size.width {
             // we don't need to scroll
 
-            let element_count = self.elements.len();
             // can we make every tab equal weight and keep the active large enough?
-            let children = if (size.width / (element_count as f32 - 5.)).ceil() as i32
+            let children = if (size.width / (self.elements.len() as f32 - 5.)).ceil() as i32
                 >= MIN_ACTIVE_TAB_WIDTH
             {
                 // just use a flex layout
-                cosmic::iced::core::layout::flex::resolve(
-                    cosmic::iced::core::layout::flex::Axis::Horizontal,
+                cosmic::iced_core::layout::flex::resolve(
+                    cosmic::iced_core::layout::flex::Axis::Horizontal,
                     renderer,
                     &limits,
                     self.width,
@@ -394,20 +384,20 @@ where
                     0.into(),
                     0.,
                     cosmic::iced::Alignment::Center,
-                    &mut self.elements[2..element_count - 2],
-                    &mut tree.children[2..element_count - 2],
+                    &self.elements[2..self.elements.len() - 2],
+                    &mut tree.children[2..self.elements.len() - 2],
                 )
                 .children()
                 .to_vec()
             } else {
                 // otherwise we need a more manual approach
-                let min_width =
-                    (size.width - MIN_ACTIVE_TAB_WIDTH as f32 - 4.) / (element_count as f32 - 6.);
+                let min_width = (size.width - MIN_ACTIVE_TAB_WIDTH as f32 - 4.)
+                    / (self.elements.len() as f32 - 6.);
                 let mut offset = 0.;
 
-                let mut nodes = self.elements[2..element_count - 3]
-                    .iter_mut()
-                    .zip(tree.children[2..element_count - 3].iter_mut())
+                let mut nodes = self.elements[2..self.elements.len() - 3]
+                    .iter()
+                    .zip(tree.children[2..].iter_mut())
                     .map(|(tab, tab_tree)| {
                         let child_limits = Limits::new(
                             Size::new(min_width, limits.min().height),
@@ -416,9 +406,7 @@ where
                         .width(Length::Shrink)
                         .height(Length::Shrink);
 
-                        let mut node =
-                            tab.as_widget_mut()
-                                .layout(tab_tree, renderer, &child_limits);
+                        let mut node = tab.as_widget().layout(tab_tree, renderer, &child_limits);
                         node = node.move_to(Point::new(offset, 0.));
                         offset += node.bounds().width;
                         node
@@ -519,11 +507,12 @@ where
 
         let background_style = Catalog::style(
             theme,
-            &theme::Container::custom(|_theme| widget::container::Style {
-                snap: true,
+            &theme::Container::custom(|theme| widget::container::Style {
                 icon_color: None,
                 text_color: None,
-                background: Some(Background::Color(Color::TRANSPARENT)),
+                background: Some(Background::Color(
+                    theme.cosmic().primary_container_color().into(),
+                )),
                 border: Border {
                     radius: 0.0.into(),
                     width: 0.0,
@@ -616,9 +605,6 @@ where
                     let cursor = match cursor {
                         mouse::Cursor::Available(point) => mouse::Cursor::Available(point + offset),
                         mouse::Cursor::Unavailable => mouse::Cursor::Unavailable,
-                        mouse::Cursor::Levitating(point) => {
-                            mouse::Cursor::Levitating(point + offset)
-                        }
                     };
 
                     renderer.with_layer(bounds, |renderer| {
@@ -691,7 +677,7 @@ where
     }
 
     fn operate(
-        &mut self,
+        &self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &cosmic::Renderer,
@@ -705,38 +691,38 @@ where
         state.cleanup_old_animations();
 
         operation.scrollable(
+            state,
             self.id.as_ref(),
             bounds,
             content_bounds,
-            Vector { x: 0.0, y: 0.0 },
-            state,
+            Vector { x: 0.0, y: 0.0 }, /* seemingly unused */
         );
-        let element_count = self.elements.len();
-        operation.traverse(&mut |operation| {
-            self.elements[2..element_count - 3]
-                .iter_mut()
+
+        operation.container(self.id.as_ref(), bounds, &mut |operation| {
+            self.elements[2..self.elements.len() - 3]
+                .iter()
                 .zip(tree.children.iter_mut().skip(2))
                 .zip(layout.children().skip(2))
                 .for_each(|((child, state), layout)| {
                     child
-                        .as_widget_mut()
+                        .as_widget()
                         .operate(state, layout, renderer, operation);
                 });
         });
     }
 
     #[allow(clippy::too_many_lines)]
-    fn update(
+    fn on_event(
         &mut self,
         tree: &mut Tree,
-        event: &event::Event,
+        event: event::Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &cosmic::Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) {
+    ) -> event::Status {
         let state = tree.state.downcast_mut::<State>();
         state.cleanup_old_animations();
 
@@ -757,10 +743,12 @@ where
             state.last_state = Some(current_state.clone());
         }
         let last_state = state.last_state.as_mut().unwrap();
-        let unknown_keys = current_state.len() != last_state.len()
-            || current_state
-                .keys()
-                .any(|key| !last_state.contains_key(key));
+        let unknown_keys = current_state
+            .keys()
+            .collect::<HashSet<_>>()
+            .symmetric_difference(&last_state.keys().collect::<HashSet<_>>())
+            .next()
+            .is_some();
 
         enum Difference {
             NewOrRemoved,
@@ -861,67 +849,69 @@ where
         let mut internal_shell = Shell::new(&mut messages);
 
         let len = self.elements.len();
-        if scrolling && cursor.position().is_some_and(|pos| pos.x < bounds.x) {
-            for ((child, state), layout) in self.elements[0..2]
+        let result = if scrolling && cursor.position().is_some_and(|pos| pos.x < bounds.x) {
+            self.elements[0..2]
                 .iter_mut()
                 .zip(&mut tree.children)
                 .zip(layout.children())
-            {
-                child.as_widget_mut().update(
-                    state,
-                    event,
-                    layout,
-                    cursor,
-                    renderer,
-                    clipboard,
-                    &mut internal_shell,
-                    viewport,
-                );
-            }
+                .map(|((child, state), layout)| {
+                    child.as_widget_mut().on_event(
+                        state,
+                        event.clone(),
+                        layout,
+                        cursor,
+                        renderer,
+                        clipboard,
+                        &mut internal_shell,
+                        viewport,
+                    )
+                })
+                .fold(event::Status::Ignored, event::Status::merge)
         } else if scrolling
             && cursor
                 .position()
                 .is_some_and(|pos| pos.x >= bounds.x + bounds.width)
         {
-            for ((child, state), layout) in self.elements[len - 3..len]
+            self.elements[len - 3..len]
                 .iter_mut()
                 .zip(tree.children.iter_mut().skip(len - 3))
                 .zip(layout.children().skip(len - 3))
-            {
-                child.as_widget_mut().update(
-                    state,
-                    event,
-                    layout,
-                    cursor,
-                    renderer,
-                    clipboard,
-                    &mut internal_shell,
-                    viewport,
-                )
-            }
+                .map(|((child, state), layout)| {
+                    child.as_widget_mut().on_event(
+                        state,
+                        event.clone(),
+                        layout,
+                        cursor,
+                        renderer,
+                        clipboard,
+                        &mut internal_shell,
+                        viewport,
+                    )
+                })
+                .fold(event::Status::Ignored, event::Status::merge)
         } else {
-            for ((child, state), layout) in self.elements[2..len - 3]
+            self.elements[2..len - 3]
                 .iter_mut()
                 .zip(tree.children.iter_mut().skip(2))
                 .zip(layout.children().skip(2))
-            {
-                let cursor = match cursor {
-                    mouse::Cursor::Available(point) => mouse::Cursor::Available(point + offset),
-                    mouse::Cursor::Unavailable => mouse::Cursor::Unavailable,
-                    mouse::Cursor::Levitating(point) => mouse::Cursor::Levitating(point + offset),
-                };
+                .map(|((child, state), layout)| {
+                    let cursor = match cursor {
+                        mouse::Cursor::Available(point) => mouse::Cursor::Available(point + offset),
+                        mouse::Cursor::Unavailable => mouse::Cursor::Unavailable,
+                    };
 
-                child.as_widget_mut().update(
-                    state,
-                    event,
-                    layout,
-                    cursor,
-                    renderer,
-                    clipboard,
-                    &mut internal_shell,
-                    viewport,
-                )
-            }
+                    child.as_widget_mut().on_event(
+                        state,
+                        event.clone(),
+                        layout,
+                        cursor,
+                        renderer,
+                        clipboard,
+                        &mut internal_shell,
+                        viewport,
+                    )
+                })
+                .fold(event::Status::Ignored, event::Status::merge)
         };
 
         for mut message in messages {
@@ -929,12 +919,14 @@ where
                 x: state.offset_x.absolute(bounds.width, content_bounds.width),
                 y: 0.,
             }) {
-                state.scroll_to(offset.into());
+                state.scroll_to(offset);
                 continue;
             }
 
             shell.publish(message);
         }
+
+        result
     }
 
     fn mouse_interaction(
@@ -1000,9 +992,6 @@ where
                     let cursor = match cursor {
                         mouse::Cursor::Available(point) => mouse::Cursor::Available(point + offset),
                         mouse::Cursor::Unavailable => mouse::Cursor::Unavailable,
-                        mouse::Cursor::Levitating(point) => {
-                            mouse::Cursor::Levitating(point + offset)
-                        }
                     };
 
                     child.as_widget().mouse_interaction(
@@ -1021,18 +1010,10 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'b>,
+        layout: Layout<'_>,
         renderer: &cosmic::Renderer,
-        viewport: &Rectangle,
         translation: cosmic::iced::Vector,
     ) -> Option<overlay::Element<'b, Message, cosmic::Theme, cosmic::Renderer>> {
-        overlay::from_children(
-            &mut self.elements,
-            tree,
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
+        overlay::from_children(&mut self.elements, tree, layout, renderer, translation)
     }
 }

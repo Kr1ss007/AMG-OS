@@ -49,30 +49,6 @@ pub enum NumlockState {
     LastBoot,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AppearanceConfig {
-    pub clip_floating_windows: bool,
-    pub clip_tiled_windows: bool,
-    pub shadow_tiled_windows: bool,
-}
-
-impl Default for AppearanceConfig {
-    fn default() -> Self {
-        AppearanceConfig {
-            clip_floating_windows: true,
-            clip_tiled_windows: true,
-            shadow_tiled_windows: false,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DecorationPreference {
-    #[default]
-    ClientSide,
-    ServerSide,
-}
-
 #[derive(Clone, Debug, PartialEq, CosmicConfigEntry)]
 #[version = 1]
 pub struct CosmicCompConfig {
@@ -105,13 +81,6 @@ pub struct CosmicCompConfig {
     /// The threshold before windows snap themselves to output edges
     pub edge_snap_threshold: u32,
     pub accessibility_zoom: ZoomConfig,
-    pub appearance_settings: AppearanceConfig,
-    /// Hide the cursor after this many seconds of pointer inactivity (None disables)
-    pub cursor_hide_timeout: Option<u32>,
-    /// Briefly magnify the cursor when the pointer is shaken, to help locate it
-    pub cursor_shake_to_find: bool,
-    pub activation_policy: ActivationPolicy,
-    pub decoration_preference: DecorationPreference,
 }
 
 impl Default for CosmicCompConfig {
@@ -147,11 +116,6 @@ impl Default for CosmicCompConfig {
             xwayland_eavesdropping: XwaylandEavesdropping::default(),
             edge_snap_threshold: 0,
             accessibility_zoom: ZoomConfig::default(),
-            appearance_settings: AppearanceConfig::default(),
-            cursor_hide_timeout: None,
-            cursor_shake_to_find: true,
-            activation_policy: ActivationPolicy::default(),
-            decoration_preference: DecorationPreference::default(),
         }
     }
 }
@@ -207,10 +171,6 @@ pub struct ZoomConfig {
     pub enable_mouse_zoom_shortcuts: bool,
 }
 
-impl ZoomConfig {
-    pub const ZOOM_INCREMENT_PRESETS: &[u32] = &[10, 25, 50, 75, 100, 150, 200];
-}
-
 impl Default for ZoomConfig {
     fn default() -> Self {
         ZoomConfig {
@@ -243,14 +203,6 @@ pub enum EavesdroppingKeyboardMode {
     Modifiers,
     Combinations,
     All,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ActivationPolicy {
-    #[default]
-    Focus,
-    FocusIfActiveWorkspace,
-    Urgent,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, Default, PartialEq, Eq)]

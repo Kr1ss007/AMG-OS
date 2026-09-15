@@ -10,3 +10,4 @@ astrophage-protocol = { path = "../protocol" }
 amgos-protocol = { path = "../../amgos-protocol" }
 serde = { workspace = true }
 bincode = { workspace = true }
+crossbeam-channel = "0.5.17"

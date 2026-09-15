@@ -16,10 +16,7 @@ use smithay::{
     desktop::{LayerSurface, layer_map_for_output},
     output::Output,
     reexports::{
-        wayland_protocols::ext::foreign_toplevel_list::v1::server::{
-            ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
-            ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1,
-        },
+        wayland_protocols::ext::foreign_toplevel_list::v1::server::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
         wayland_protocols_wlr::layer_shell::v1::server::{
             zwlr_layer_shell_v1::Layer as WlrLayer, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
         },
@@ -27,9 +24,7 @@ use smithay::{
     },
     utils::{Logical, Rectangle},
     wayland::{
-        foreign_toplevel_list::{
-            ForeignToplevelHandle, ForeignToplevelListGlobalData, ForeignToplevelListHandler,
-        },
+        foreign_toplevel_list::ForeignToplevelListHandler,
         shell::wlr_layer::{ExclusiveZone, Layer},
     },
 };
@@ -80,8 +75,6 @@ impl OverlapNotifyState {
     pub fn refresh<D, W>(state: &mut D)
     where
         D: GlobalDispatch<ZcosmicOverlapNotifyV1, OverlapNotifyGlobalData>
-            + GlobalDispatch<ExtForeignToplevelListV1, ForeignToplevelListGlobalData>
-            + Dispatch<ExtForeignToplevelHandleV1, ForeignToplevelHandle>
             + Dispatch<ZcosmicOverlapNotifyV1, ()>
             + Dispatch<ZcosmicOverlapNotificationV1, ()>
             + OverlapNotifyHandler
@@ -131,16 +124,16 @@ impl OverlapNotifyState {
                                         })
                                 })
                         {
-                            if let Some(window_geo) = window.global_geometry()
-                                && let Some(intersection) = layer_geo.intersection(window_geo)
-                            {
-                                // relative to layer location
-                                let region = Rectangle::new(
-                                    intersection.loc - layer_geo.loc,
-                                    intersection.size,
-                                )
-                                .as_logical();
-                                new_snapshot.add_toplevel(window, region);
+                            if let Some(window_geo) = window.global_geometry() {
+                                if let Some(intersection) = layer_geo.intersection(window_geo) {
+                                    // relative to layer location
+                                    let region = Rectangle::new(
+                                        intersection.loc - layer_geo.loc,
+                                        intersection.size,
+                                    )
+                                    .as_logical();
+                                    new_snapshot.add_toplevel(window, region);
+                                }
                             }
                         }
 
@@ -245,15 +238,16 @@ impl LayerOverlapNotificationDataInternal {
             .collect::<Vec<_>>();
 
         for toplevel in self.last_snapshot.toplevel_overlaps.keys() {
-            if !new_snapshot.toplevel_overlaps.contains_key(toplevel)
-                && let Ok(toplevel) = toplevel.upgrade()
-                && let Some(client) = toplevel.client()
-            {
-                for notification in notifications
-                    .iter()
-                    .filter(|n| n.client().is_some_and(|c| c == client))
-                {
-                    notification.toplevel_leave(&toplevel);
+            if !new_snapshot.toplevel_overlaps.contains_key(toplevel) {
+                if let Ok(toplevel) = toplevel.upgrade() {
+                    if let Some(client) = toplevel.client() {
+                        for notification in notifications
+                            .iter()
+                            .filter(|n| n.client().is_some_and(|c| c == client))
+                        {
+                            notification.toplevel_leave(&toplevel);
+                        }
+                    }
                 }
             }
         }
@@ -263,20 +257,22 @@ impl LayerOverlapNotificationDataInternal {
                 .toplevel_overlaps
                 .get(toplevel)
                 .is_some_and(|old_overlap| old_overlap == overlap)
-                && let Ok(toplevel) = toplevel.upgrade()
-                && let Some(client) = toplevel.client()
             {
-                for notification in notifications
-                    .iter()
-                    .filter(|n| n.client().is_some_and(|c| c == client))
-                {
-                    notification.toplevel_enter(
-                        &toplevel,
-                        overlap.loc.x,
-                        overlap.loc.y,
-                        overlap.size.w,
-                        overlap.size.h,
-                    );
+                if let Ok(toplevel) = toplevel.upgrade() {
+                    if let Some(client) = toplevel.client() {
+                        for notification in notifications
+                            .iter()
+                            .filter(|n| n.client().is_some_and(|c| c == client))
+                        {
+                            notification.toplevel_enter(
+                                &toplevel,
+                                overlap.loc.x,
+                                overlap.loc.y,
+                                overlap.size.w,
+                                overlap.size.h,
+                            );
+                        }
+                    }
                 }
             }
         }

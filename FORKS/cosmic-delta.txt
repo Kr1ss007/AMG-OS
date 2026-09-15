@@ -4,9 +4,9 @@ Status: Active tracking
 ================================================================================
 
 Every divergence from upstream COSMIC (cosmic-comp) must be recorded here.
-Snapshot source: https://github.com/pop-os/cosmic-comp.git (branch master)
-Snapshot commit: a7349b72e39fd91d7ed25eddb2fa24b900a615d5
-Snapshot date: 2026-09-14
+Snapshot source: https://github.com/pop-os/cosmic-comp.git (tag: epoch-1.0.0)
+Snapshot commit: fa88002ba41d2edec25dd7ffdee9719fbb928fc0
+Snapshot date: 2026-09-15
 
 DIVERGENCES:
 1. Split into two-process architecture (Compositor in Process 2, Hardware in Process 1).

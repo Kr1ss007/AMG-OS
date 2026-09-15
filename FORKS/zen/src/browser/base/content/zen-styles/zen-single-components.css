@@ -1,0 +1,47 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
+/* Screenshots */
+
+#screenshotsPagePanel {
+  position: absolute !important;
+  top: 3%;
+  right: 1.5%;
+}
+
+#zen-workspaces-button .zen-workspace-sidebar-name {
+  margin-left: 10px;
+  display: none;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@media not (-moz-bool-pref: 'zen.watermark.enabled') {
+  #zen-watermark {
+    display: none;
+  }
+}
+
+#customization-footer #customization-toolbar-visibility-button {
+  display: none !important;
+}
+
+#alltabs-button {
+  display: none !important;
+}
+
+.private-browsing-indicator-with-label {
+  display: none !important;
+}
+
+body > #confetti {
+  z-index: 1;
+}
+
+/* Bookmarks */
+#PersonalToolbar:not([collapsed='true']) {
+  min-height: 30px;
+}

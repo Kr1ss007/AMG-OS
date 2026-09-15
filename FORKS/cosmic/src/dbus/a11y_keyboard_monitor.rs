@@ -1,12 +1,13 @@
 // https://gitlab.gnome.org/GNOME/mutter/-/blob/main/data/dbus-interfaces/org.freedesktop.a11y.xml
 
+use futures_executor::ThreadPool;
 use smithay::{
     backend::input::KeyState,
     input::keyboard::{KeysymHandle, ModifiersState},
 };
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 use tracing::debug;
 use xkbcommon::xkb::Keysym;
@@ -18,7 +19,7 @@ use zbus::{
 
 use super::name_owners::NameOwners;
 
-static ALLOWED_NAMES: &[WellKnownName] = &[WellKnownName::from_static_str_unchecked(
+static ALLOWED_NAMES: &'static [WellKnownName] = &[WellKnownName::from_static_str_unchecked(
     "org.gnome.Orca.KeyboardMonitor",
 )];
 
@@ -71,37 +72,40 @@ impl Clients {
 
 #[derive(Debug)]
 pub struct A11yKeyboardMonitorState {
-    executor: calloop::futures::Scheduler<()>,
+    executor: ThreadPool,
     clients: Arc<Mutex<Clients>>,
     active_virtual_mods: HashSet<Keysym>,
-    conn: zbus::Connection,
-    name_owners: NameOwners,
+    conn: Arc<OnceLock<zbus::Connection>>,
+    name_owners: Arc<OnceLock<NameOwners>>,
 }
 
 impl A11yKeyboardMonitorState {
-    pub async fn new(
-        conn: &zbus::Connection,
-        name_owners: &NameOwners,
-        executor: &calloop::futures::Scheduler<()>,
-    ) -> zbus::Result<Self> {
+    pub fn new(executor: &ThreadPool) -> Self {
         let clients = Arc::new(Mutex::new(Clients::default()));
-
-        let keyboard_monitor = KeyboardMonitor {
-            clients: clients.clone(),
-            name_owners: name_owners.clone(),
-        };
-        conn.object_server()
-            .at("/org/freedesktop/a11y/Manager", keyboard_monitor)
-            .await?;
-        conn.request_name("org.freedesktop.a11y.Manager").await?;
-
-        Ok(Self {
+        let clients_clone = clients.clone();
+        let conn_cell = Arc::new(OnceLock::new());
+        let conn_cell_clone = conn_cell.clone();
+        let name_owners_cell = Arc::new(OnceLock::new());
+        let name_owners_cell_clone = name_owners_cell.clone();
+        let executor_clone = executor.clone();
+        executor.spawn_ok(async move {
+            match serve(clients_clone, &executor_clone).await {
+                Ok((conn, name_owners)) => {
+                    conn_cell_clone.set(conn).unwrap();
+                    name_owners_cell_clone.set(name_owners).unwrap();
+                }
+                Err(err) => {
+                    tracing::error!("Failed to serve `org.freedesktop.a11y.Manager`: {err}");
+                }
+            }
+        });
+        Self {
             executor: executor.clone(),
             clients,
             active_virtual_mods: HashSet::new(),
-            conn: conn.clone(),
-            name_owners: name_owners.clone(),
-        })
+            conn: conn_cell,
+            name_owners: name_owners_cell,
+        }
     }
 
     pub fn has_virtual_mod(&self, keysym: Keysym) -> bool {
@@ -150,15 +154,18 @@ impl A11yKeyboardMonitorState {
     }
 
     pub fn key_event(&self, modifiers: &ModifiersState, keysym: &KeysymHandle, state: KeyState) {
-        let has_key_grab = self.has_key_grab(modifiers, keysym.modified_sym());
+        let Some(conn) = self.conn.get() else {
+            return;
+        };
+
         let clients = self.clients.lock().unwrap();
         for (unique_name, client) in clients.0.iter() {
-            if !client.watched && !has_key_grab {
+            if !client.watched && !self.has_key_grab(modifiers, keysym.modified_sym()) {
                 continue;
             }
 
             let mut signal_context =
-                SignalEmitter::new(&self.conn, "/org/freedesktop/a11y/Manager").unwrap();
+                SignalEmitter::new(conn, "/org/freedesktop/a11y/Manager").unwrap();
             // Instead of sending signal to all clients, send only to authorized
             // clients with registed watches.
             signal_context = signal_context.set_destination(unique_name.clone().into());
@@ -179,7 +186,7 @@ impl A11yKeyboardMonitorState {
                 unichar,
                 keysym.raw_code().raw() as u16,
             );
-            let _ = self.executor.schedule(async {
+            self.executor.spawn_ok(async {
                 let _ = future.await;
             });
         }
@@ -188,11 +195,13 @@ impl A11yKeyboardMonitorState {
     pub fn refresh(&mut self) {
         // Remove clients and associated grabs when unique names are no longer
         // present on bus, or no longer hold approved name on bus.
-        self.clients
-            .lock()
-            .unwrap()
-            .0
-            .retain(|k, _| self.name_owners.check_owner_no_poll(k, ALLOWED_NAMES))
+        if let Some(name_owners) = self.name_owners.get() {
+            self.clients
+                .lock()
+                .unwrap()
+                .0
+                .retain(|k, _| name_owners.check_owner_no_poll(k, ALLOWED_NAMES))
+        }
     }
 }
 
@@ -301,4 +310,21 @@ impl KeyboardMonitor {
         unichar: u32,
         keycode: u16,
     ) -> zbus::Result<()>;
+}
+
+async fn serve(
+    clients: Arc<Mutex<Clients>>,
+    executor: &ThreadPool,
+) -> zbus::Result<(zbus::Connection, NameOwners)> {
+    let conn = zbus::Connection::session().await?;
+    let name_owners = NameOwners::new(&conn, executor).await?;
+    let keyboard_monitor = KeyboardMonitor {
+        clients,
+        name_owners: name_owners.clone(),
+    };
+    conn.object_server()
+        .at("/org/freedesktop/a11y/Manager", keyboard_monitor)
+        .await?;
+    conn.request_name("org.freedesktop.a11y.Manager").await?;
+    Ok((conn, name_owners))
 }

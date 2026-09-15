@@ -25,7 +25,7 @@ use amgos_system::network::NetworkCredentialVault;
 use amgos_system::permissions::PermissionManager;
 use amgos_system::power::PowerManager;
 use amgos_system::supervisor::ServiceSupervisor;
-use filer_core::{AppLayerManager, FileSystemIndexer, PackageInspector, PathfinderIndex};
+use filer_core::{AppLayerManager, DownloadManager, FileSystemIndexer, PackageInspector, PathfinderIndex};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -40,7 +40,7 @@ fn now_ns() -> u64 {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("[amgos-system] Starting Process 1 (System Session)...");
+    // Boot sequence starts silently. No TTY output.
 
     // 1. Initialize Astrophage Continuous Event Logger
     let astrophage = Arc::new(AstrophageCoreLogger::new());
@@ -53,14 +53,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. Hardware Detection
     let hw_profile = detect_hardware();
-    println!(
-        "[amgos-system] Hardware detected: CPU: {} ({} cores, {} threads), RAM: {} MB, GPU: {}",
-        hw_profile.cpu_model,
-        hw_profile.cpu_cores,
-        hw_profile.cpu_threads,
-        hw_profile.total_memory_bytes / (1024 * 1024),
-        hw_profile.discrete_gpu_detected
-    );
 
     astrophage.log(
         AstrophageLevel::Info,
@@ -80,22 +72,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let motionwave = Arc::new(MotionWaveController::new());
     let eobus = Arc::new(EventOutsiderBusBridge::new());
 
-    // 5. Filer Core: Pathfinder Index & App Layer Manager
+    // 5. Filer Core: Pathfinder Index, App Layer Manager, and Download Manager
     let pathfinder = Arc::new(Mutex::new(PathfinderIndex::new()));
     {
         let mut idx = pathfinder.lock().unwrap();
         idx.scan_system_applications();
     }
     let app_layer = Arc::new(AppLayerManager::default());
+    let download_manager = Arc::new(DownloadManager::default());
 
     // 6. Bind internal pub/sub EventBus (e-bus)
     let ebus_server = Arc::new(
         EventBusServer::bind(DEFAULT_EBUS_SOCKET_PATH)
             .expect("Failed to bind EventBus socket at /tmp/amgos-ebus.sock"),
     );
-    println!(
-        "[amgos-system] EventBus (e-bus) listening on {}",
-        DEFAULT_EBUS_SOCKET_PATH
+    astrophage.log(
+        AstrophageLevel::Info,
+        "ebus",
+        &format!("EventBus (e-bus) listening on {}", DEFAULT_EBUS_SOCKET_PATH),
+        None,
     );
 
     // 7. Start Supervisor and worker services
@@ -137,9 +132,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = ebus_server.publish_event(&audio_event);
 
     if let Some(chime) = avm.evaluate_chime_sequencer() {
-        println!(
-            "[amgos-system] AVM Chime Sequencer triggered: Note {} ({:.2} Hz, duration {} ms)",
-            chime.note, chime.frequency_hz, chime.duration_ms
+        astrophage.log(
+            AstrophageLevel::Info,
+            "avm",
+            &format!("Chime Sequencer triggered: Note {} ({:.2} Hz)", chime.note, chime.frequency_hz),
+            None,
         );
         let _ = avm.play_boot_chime_hardware();
         let chime_event = SystemEvent::BootChimeTrigger {
@@ -157,17 +154,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         active_governor: "powersave".to_string(),
     });
 
-    // 9. Main request dispatch loop
-    let running = Arc::new(AtomicBool::new(true));
-    let r = Arc::clone(&running);
-    let _ = ctrlc_handler(move || {
-        println!("\n[amgos-system] Controlled shutdown requested.");
-        r.store(false, Ordering::SeqCst);
-    });
+    // 9. Main request dispatch loop with real POSIX SIGINT/SIGTERM handlers
+    install_signal_handlers();
+    astrophage.log(AstrophageLevel::Info, "system", "Process 1 operational. Awaiting Process 2 requests.", None);
 
-    println!("[amgos-system] Process 1 operational. Awaiting Process 2 requests.");
-
-    while running.load(Ordering::SeqCst) {
+    while RUNNING_SIGNAL.load(Ordering::SeqCst) {
         thread::sleep(Duration::from_millis(20));
         let _ = ebus_server.poll_connections();
 
@@ -368,22 +359,175 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 DesktopRequest::DismissNotification { notification_id } => {
                     eobus.dismiss_notification(notification_id);
                 }
+
+                DesktopRequest::ScanWifiAccessPoints => {
+                    let aps = network.scan_access_points();
+                    let protocol_aps = aps
+                        .into_iter()
+                        .map(|ap| amgos_protocol::ebus::WifiAccessPoint {
+                            ssid: ap.ssid,
+                            signal_strength_pct: ap.signal_strength_pct,
+                            is_secured: ap.is_secured,
+                        })
+                        .collect();
+                    let _ = ebus_server.publish_event(&SystemEvent::WifiScanResults {
+                        access_points: protocol_aps,
+                    });
+                }
+
+                DesktopRequest::DownloadPackage { url } => {
+                    let dm = Arc::clone(&download_manager);
+                    let ebus_prog = Arc::clone(&ebus_server);
+                    let url_clone = url.clone();
+
+                    match dm.start_download(&url) {
+                        Ok(job_id) => {
+                            astrophage.log(
+                                AstrophageLevel::Info,
+                                "download-manager",
+                                &format!("Download started: {url_clone} (job {job_id})"),
+                                None,
+                            );
+                            // Publish initial queued status
+                            let _ = ebus_prog.publish_event(&SystemEvent::DownloadProgress {
+                                job_id,
+                                url: url_clone,
+                                bytes_received: 0,
+                                total_bytes: 0,
+                                percent: 0.0,
+                                status: amgos_protocol::ebus::DownloadJobStatus::Connecting,
+                            });
+                        }
+                        Err(err) => {
+                            astrophage.log(
+                                AstrophageLevel::Error,
+                                "download-manager",
+                                &format!("Failed to start download for {url_clone}: {err}"),
+                                None,
+                            );
+                        }
+                    }
+                }
+
+                DesktopRequest::CancelDownload { job_id } => {
+                    let _ = download_manager.cancel_download(job_id);
+                    let _ = ebus_server.publish_event(&SystemEvent::DownloadProgress {
+                        job_id,
+                        url: String::new(),
+                        bytes_received: 0,
+                        total_bytes: 0,
+                        percent: 0.0,
+                        status: amgos_protocol::ebus::DownloadJobStatus::Cancelled,
+                    });
+                }
+
+                DesktopRequest::FirstBootWizardComplete {
+                    user_name: _,
+                    locale: _,
+                    ssid,
+                    ui_scale_factor: _,
+                    telemetry_opt_in: _,
+                    config_payload,
+                    hmac_signature,
+                } => {
+                    // Apply the signed configuration from the wizard
+                    match permissions.apply_config(&config_payload, &hmac_signature) {
+                        Ok(cfg) => {
+                            // If a WiFi network was selected in the wizard, connect to it now using the decrypted passphrase
+                            if let Some(ref ssid_str) = ssid {
+                                let passphrase = cfg.wifi_passphrase.clone().unwrap_or_default();
+                                let _ = network.connect(ssid_str, &passphrase);
+                            }
+
+                            let _ = ebus_server.publish_event(&SystemEvent::FirstBootConfigApplied {
+                                user_name: cfg.user_name,
+                                locale: cfg.locale,
+                                ui_scale_factor: cfg.ui_scale_factor,
+                            });
+                        }
+                        Err(err) => {
+                            astrophage.log(
+                                AstrophageLevel::Error,
+                                "wizard",
+                                &format!("First-boot config signature verification failed: {err}"),
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Poll download manager progress and emit events
+        for job_id in download_manager.active_jobs() {
+            if let Some(status) = download_manager.poll_job(job_id) {
+                use filer_core::downloads::DownloadStatus;
+                let (bytes_received, total_bytes, percent, proto_status) = match &status {
+                    DownloadStatus::Connecting => (
+                        0, 0, 0.0,
+                        amgos_protocol::ebus::DownloadJobStatus::Connecting,
+                    ),
+                    DownloadStatus::Downloading { bytes_received, total_bytes } => {
+                        let pct = if *total_bytes > 0 {
+                            (*bytes_received as f32 / *total_bytes as f32) * 100.0
+                        } else {
+                            0.0
+                        };
+                        (*bytes_received, *total_bytes, pct,
+                         amgos_protocol::ebus::DownloadJobStatus::Downloading)
+                    }
+                    DownloadStatus::Completed { .. } => (
+                        0, 0, 100.0,
+                        amgos_protocol::ebus::DownloadJobStatus::Completed,
+                    ),
+                    DownloadStatus::Failed { .. } => (
+                        0, 0, 0.0,
+                        amgos_protocol::ebus::DownloadJobStatus::Failed,
+                    ),
+                    _ => (
+                        0, 0, 0.0,
+                        amgos_protocol::ebus::DownloadJobStatus::Queued,
+                    ),
+                };
+
+                let jobs_guard = download_manager.active_jobs();
+                let url = jobs_guard
+                    .iter()
+                    .next()
+                    .map(|_| String::new())
+                    .unwrap_or_default();
+
+                let _ = ebus_server.publish_event(&SystemEvent::DownloadProgress {
+                    job_id,
+                    url,
+                    bytes_received,
+                    total_bytes,
+                    percent,
+                    status: proto_status,
+                });
             }
         }
     }
 
     supervisor.shutdown();
     ebus_server.shutdown();
-    println!("[amgos-system] Process 1 shutdown complete.");
+    astrophage.log(AstrophageLevel::Info, "system", "Process 1 shutdown complete.", None);
     Ok(())
 }
 
-fn ctrlc_handler<F>(f: F) -> Result<(), Box<dyn std::error::Error>>
-where
-    F: FnMut() + Send + 'static,
-{
-    thread::spawn(move || {
-        let _ = f;
-    });
-    Ok(())
+static RUNNING_SIGNAL: AtomicBool = AtomicBool::new(true);
+
+extern "C" fn handle_posix_signal(_sig: libc::c_int) {
+    RUNNING_SIGNAL.store(false, Ordering::SeqCst);
+}
+
+fn install_signal_handlers() {
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = handle_posix_signal as *const () as usize;
+        sa.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut sa.sa_mask);
+        libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
+        libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
+    }
 }

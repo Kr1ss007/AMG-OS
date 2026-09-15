@@ -1,0 +1,12 @@
+diff --git a/toolkit/components/downloads/DownloadList.sys.mjs b/toolkit/components/downloads/DownloadList.sys.mjs
+index c4e5776940c4cdca731a82ba91d41620c4c7b75a..d580d193bda5e932cebc849c4487de504f17b6fe 100644
+--- a/toolkit/components/downloads/DownloadList.sys.mjs
++++ b/toolkit/components/downloads/DownloadList.sys.mjs
+@@ -50,6 +50,7 @@ const FILE_EXTENSIONS = [
+   "jpg",
+   "jpeg",
+   "json",
++  "jxl",
+   "m4a",
+   "mdb",
+   "mid",

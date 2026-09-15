@@ -5,7 +5,7 @@ use std::{any::Any, cell::RefCell, collections::HashMap, sync::Mutex};
 use crate::{
     backend::render::cursor::CursorState,
     config::{Config, xkb_config_to_wl},
-    input::{InputBackendId, ModifiersShortcutQueue, SupressedButtons, SupressedKeys},
+    input::{ModifiersShortcutQueue, SupressedButtons, SupressedKeys},
     state::State,
 };
 use smithay::{
@@ -17,11 +17,8 @@ use smithay::{
         pointer::{CursorImageAttributes, CursorImageStatus},
     },
     output::Output,
-    reexports::{
-        input::Device as InputDevice,
-        wayland_server::{DisplayHandle, protocol::wl_surface::WlSurface},
-    },
-    utils::{Buffer, IsAlive, Logical, Monotonic, Point, Rectangle, Serial, Time, Transform},
+    reexports::{input::Device as InputDevice, wayland_server::DisplayHandle},
+    utils::{Buffer, IsAlive, Monotonic, Point, Rectangle, Serial, Time, Transform},
     wayland::compositor::with_states,
 };
 use tracing::warn;
@@ -82,25 +79,12 @@ impl Seats {
         self.last_active = Some(seat.clone());
     }
 
-    pub fn for_device<D: Device>(
-        &self,
-        device: &D,
-        backend_id: &InputBackendId,
-    ) -> Option<&Seat<State>> {
-        self.iter()
-            .find(|seat| {
-                let userdata = seat.user_data();
-                let devices = userdata.get::<Devices>().unwrap();
-                devices.has_device(device, backend_id)
-            })
-            .or_else(|| {
-                // EI devices can be transiently unregistered while the compositor recreates
-                // the absolute-pointer device (e.g. on a scale/geometry change), which would
-                // otherwise drop all pointer/touch input until the client re-binds it. EI is
-                // single-seat, so fall back to the active seat here, matching the EI keyboard
-                // path, which always targets the active seat.
-                matches!(backend_id, InputBackendId::Ei(_)).then(|| self.last_active())
-            })
+    pub fn for_device<D: Device>(&self, device: &D) -> Option<&Seat<State>> {
+        self.iter().find(|seat| {
+            let userdata = seat.user_data();
+            let devices = userdata.get::<Devices>().unwrap();
+            devices.has_device(device)
+        })
     }
 }
 
@@ -109,7 +93,6 @@ impl Devices {
         &self,
         device: &D,
         led_state: LedState,
-        backend_id: &InputBackendId,
     ) -> Vec<DeviceCapability> {
         let id = device.id();
         let mut map = self.capabilities.borrow_mut();
@@ -127,31 +110,24 @@ impl Devices {
             .cloned()
             .filter(|c| map.values().flatten().all(|has| *c != *has))
             .collect::<Vec<_>>();
-        map.insert((backend_id.clone(), id), caps);
+        map.insert(id, caps);
 
-        if device.has_capability(DeviceCapability::Keyboard)
-            && let Some(device) = <dyn Any>::downcast_ref::<InputDevice>(device)
-        {
-            let mut device = device.clone();
-            device.led_update(led_state.into());
-            self.keyboards.borrow_mut().push(device);
+        if device.has_capability(DeviceCapability::Keyboard) {
+            if let Some(device) = <dyn Any>::downcast_ref::<InputDevice>(device) {
+                let mut device = device.clone();
+                device.led_update(led_state.into());
+                self.keyboards.borrow_mut().push(device);
+            }
         }
 
         new_caps
     }
 
-    /// Whether the given backend's device with this id is registered on the seat.
-    pub fn has_device<D: Device>(&self, device: &D, backend_id: &InputBackendId) -> bool {
-        self.capabilities
-            .borrow()
-            .contains_key(&(backend_id.clone(), device.id()))
+    pub fn has_device<D: Device>(&self, device: &D) -> bool {
+        self.capabilities.borrow().contains_key(&device.id())
     }
 
-    pub fn remove_device<D: Device>(
-        &self,
-        device: &D,
-        backend_id: &InputBackendId,
-    ) -> Vec<DeviceCapability> {
+    pub fn remove_device<D: Device>(&self, device: &D) -> Vec<DeviceCapability> {
         let id = device.id();
 
         let mut keyboards = self.keyboards.borrow_mut();
@@ -160,7 +136,7 @@ impl Devices {
         }
 
         let mut map = self.capabilities.borrow_mut();
-        map.remove(&(backend_id.clone(), id))
+        map.remove(&id)
             .unwrap_or_default()
             .into_iter()
             .filter(|c| map.values().flatten().all(|has| *c != *has))
@@ -176,8 +152,7 @@ impl Devices {
 
 #[derive(Default)]
 pub struct Devices {
-    // Keyed by `(backend, device_id)`
-    capabilities: RefCell<HashMap<(InputBackendId, String), Vec<DeviceCapability>>>,
+    capabilities: RefCell<HashMap<String, Vec<DeviceCapability>>>,
     // Used for updating keyboard leds on kms backend
     keyboards: RefCell<Vec<InputDevice>>,
 }
@@ -204,10 +179,7 @@ struct ActiveOutput(pub Mutex<Output>);
 struct FocusedOutput(pub Mutex<Option<Output>>);
 
 #[derive(Default)]
-pub struct PointerConstraintHint(pub Mutex<Option<(WlSurface, Point<f64, Logical>)>>);
-
-#[derive(Default)]
-pub struct LastModifierChange(pub Mutex<(HashMap<InputBackendId, Serial>, Option<Serial>)>);
+pub struct LastModifierChange(pub Mutex<Option<Serial>>);
 
 pub fn create_seat(
     dh: &DisplayHandle,
@@ -229,7 +201,6 @@ pub fn create_seat(
     userdata.insert_if_missing_threadsafe(CursorState::default);
     userdata.insert_if_missing_threadsafe(|| ActiveOutput(Mutex::new(output.clone())));
     userdata.insert_if_missing_threadsafe(|| FocusedOutput(Mutex::new(None)));
-    userdata.insert_if_missing_threadsafe(PointerConstraintHint::default);
     userdata.insert_if_missing_threadsafe(|| Mutex::new(CursorImageStatus::default_named()));
 
     // A lot of clients bind keyboard and pointer unconditionally once on launch..
@@ -265,12 +236,6 @@ pub fn create_seat(
     seat
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct CursorGeometry {
-    pub geometry: Rectangle<i32, Buffer>,
-    pub hotspot: Point<i32, Buffer>,
-}
-
 pub trait SeatExt {
     fn id(&self) -> usize;
 
@@ -287,17 +252,12 @@ pub trait SeatExt {
     fn supressed_buttons(&self) -> &SupressedButtons;
     fn modifiers_shortcut_queue(&self) -> &ModifiersShortcutQueue;
     fn last_modifier_change(&self) -> Option<Serial>;
-    fn last_modifier_change_for(&self, backend_id: &InputBackendId) -> Option<Serial>;
-    fn set_last_modifier_change(&self, backend_id: &InputBackendId, serial: Serial);
-    fn clear_last_modifier_change(&self, backend_id: &InputBackendId);
-    fn pointer_constraint_hint(&self) -> Option<(WlSurface, Point<f64, Logical>)>;
-    fn set_pointer_constraint_hint(&self, hint: Option<(WlSurface, Point<f64, Logical>)>);
 
     fn cursor_geometry(
         &self,
         loc: impl Into<Point<f64, Buffer>>,
         time: Time<Monotonic>,
-    ) -> Option<CursorGeometry>;
+    ) -> Option<(Rectangle<i32, Buffer>, Point<i32, Buffer>)>;
     fn cursor_image_status(&self) -> CursorImageStatus;
     fn set_cursor_image_status(&self, status: CursorImageStatus);
 }
@@ -368,72 +328,20 @@ impl SeatExt for Seat<State> {
     }
 
     fn last_modifier_change(&self) -> Option<Serial> {
-        self.user_data()
-            .get::<LastModifierChange>()
-            .unwrap()
-            .0
-            .lock()
-            .unwrap()
-            .1
-    }
-
-    fn last_modifier_change_for(&self, backend_id: &InputBackendId) -> Option<Serial> {
-        self.user_data()
-            .get::<LastModifierChange>()
-            .unwrap()
-            .0
-            .lock()
-            .unwrap()
-            .0
-            .get(backend_id)
-            .copied()
-    }
-
-    fn set_last_modifier_change(&self, backend_id: &InputBackendId, serial: Serial) {
-        let mut guard = self
+        *self
             .user_data()
             .get::<LastModifierChange>()
             .unwrap()
             .0
             .lock()
-            .unwrap();
-        guard.0.insert(backend_id.clone(), serial);
-        guard.1 = Some(serial);
-    }
-
-    fn clear_last_modifier_change(&self, backend_id: &InputBackendId) {
-        self.user_data()
-            .get::<LastModifierChange>()
             .unwrap()
-            .0
-            .lock()
-            .unwrap()
-            .0
-            .remove(backend_id);
-    }
-
-    fn pointer_constraint_hint(&self) -> Option<(WlSurface, Point<f64, Logical>)> {
-        let lock = self.user_data().get::<PointerConstraintHint>().unwrap();
-        let mut hint = lock.0.lock().unwrap();
-        // Check if alive
-        if let Some((ref surface, _)) = *hint
-            && !surface.alive()
-        {
-            *hint = None;
-        }
-        hint.clone()
-    }
-
-    fn set_pointer_constraint_hint(&self, hint: Option<(WlSurface, Point<f64, Logical>)>) {
-        let lock = self.user_data().get::<PointerConstraintHint>().unwrap();
-        *lock.0.lock().unwrap() = hint;
     }
 
     fn cursor_geometry(
         &self,
         loc: impl Into<Point<f64, Buffer>>,
         time: Time<Monotonic>,
-    ) -> Option<CursorGeometry> {
+    ) -> Option<(Rectangle<i32, Buffer>, Point<i32, Buffer>)> {
         let location = loc.into().to_i32_round();
 
         match self.cursor_image_status() {
@@ -452,10 +360,7 @@ impl SeatExt for Seat<State> {
                     (geo.loc.x, geo.loc.y).into(),
                     geo.size.to_buffer(1, Transform::Normal),
                 );
-                Some(CursorGeometry {
-                    geometry: buffer_geo,
-                    hotspot: (hotspot.x, hotspot.y).into(),
-                })
+                Some((buffer_geo, (hotspot.x, hotspot.y).into()))
             }
             CursorImageStatus::Named(cursor_icon) => {
                 let seat_userdata = self.user_data();
@@ -467,13 +372,10 @@ impl SeatExt for Seat<State> {
                     .get_named_cursor(cursor_icon)
                     .get_image(1, time.as_millis());
 
-                Some(CursorGeometry {
-                    geometry: Rectangle::new(
-                        location,
-                        (frame.width as i32, frame.height as i32).into(),
-                    ),
-                    hotspot: (frame.xhot as i32, frame.yhot as i32).into(),
-                })
+                Some((
+                    Rectangle::new(location, (frame.width as i32, frame.height as i32).into()),
+                    (frame.xhot as i32, frame.yhot as i32).into(),
+                ))
             }
             CursorImageStatus::Hidden => None,
         }
@@ -483,10 +385,10 @@ impl SeatExt for Seat<State> {
         let lock = self.user_data().get::<Mutex<CursorImageStatus>>().unwrap();
         // Reset the cursor if the surface is no longer alive
         let mut cursor_status = lock.lock().unwrap();
-        if let CursorImageStatus::Surface(ref surface) = *cursor_status
-            && !surface.alive()
-        {
-            *cursor_status = CursorImageStatus::default_named();
+        if let CursorImageStatus::Surface(ref surface) = *cursor_status {
+            if !surface.alive() {
+                *cursor_status = CursorImageStatus::default_named();
+            }
         }
         cursor_status.clone()
     }

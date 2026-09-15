@@ -1,19 +1,19 @@
 diff --git a/browser/base/content/main-popupset.inc.xhtml b/browser/base/content/main-popupset.inc.xhtml
-index ded45fd53f0fd7f0a48283d61cffdda20f79137e..7fc34d89146b723cb01a1432bc1d1fe97e5d2eba 100644
+index 959c523b21c642f29353b9de37b3ce6b5505b01b..4cd26ea85ad4905bade71dcd470b8678079787bd 100644
 --- a/browser/base/content/main-popupset.inc.xhtml
 +++ b/browser/base/content/main-popupset.inc.xhtml
-@@ -234,6 +234,10 @@
+@@ -206,6 +206,10 @@
             hidden="true"
             tabspecific="true"
             aria-labelledby="editBookmarkPanelTitle">
-+    <html:div id="zenEditBookmarkPanelFaviconContainer">
-+      <html:img id="zenEditBookmarkPanelFavicon"/>
-+    </html:div>
-+    <vbox>
++      <html:div id="zenEditBookmarkPanelFaviconContainer">
++        <html:img id="zenEditBookmarkPanelFavicon"/>
++      </html:div>
++      <vbox>
        <box class="panel-header">
          <html:h1>
            <html:span id="editBookmarkPanelTitle"/>
-@@ -259,6 +263,7 @@
+@@ -231,6 +235,7 @@
                    class="footer-button"/>
          </html:moz-button-group>
        </vbox>
@@ -21,7 +21,21 @@ index ded45fd53f0fd7f0a48283d61cffdda20f79137e..7fc34d89146b723cb01a1432bc1d1fe9
      </panel>
    </html:template>
  
-@@ -765,6 +770,8 @@
+@@ -426,11 +431,13 @@
+               observes="cmd_CustomizeToolbars"
+               class="viewCustomizeToolbar"
+               data-lazy-l10n-id="toolbar-context-menu-view-customize-toolbar-2"/>
++#if 0
+     <menuseparator id="sidebarRevampSeparator"/>
+     <menuitem id="toolbar-context-toggle-vertical-tabs"
+               data-lazy-l10n-id="toolbar-context-turn-on-vertical-tabs"/>
+     <menuitem id="toolbar-context-customize-sidebar"
+               data-lazy-l10n-id="toolbar-context-customize-sidebar"/>
++#endif
+     <menuseparator contexttype="fullscreen"/>
+     <menuitem id="toolbar-context-full-screen-autohide"
+               class="fullscreen-context-autohide"
+@@ -565,6 +572,8 @@
  
  #include popup-notifications.inc.xhtml
  

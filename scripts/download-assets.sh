@@ -95,31 +95,33 @@ echo "WhiteSur Icon theme installed in assets/icons/WhiteSur."
 # ------------------------------------------------------------------------------
 # 4. FORKS (COSMIC & ZEN BROWSER)
 # ------------------------------------------------------------------------------
-echo "[4/4] Setting up upstream snapshots in FORKS/..."
+echo "[4/4] Setting up upstream forks via local git clones in FORKS/..."
 mkdir -p "$REPO_ROOT/FORKS"
-TMP_FORK_DIR="$(mktemp -d)"
 
-# 4.1 COSMIC Compositor
-echo "  -> Fetching COSMIC compositor upstream snapshot..."
-curl -sL "https://github.com/pop-os/cosmic-comp/archive/refs/heads/master.tar.gz" \
-    -o "$TMP_FORK_DIR/cosmic.tar.gz"
-rm -rf "$REPO_ROOT/FORKS/cosmic"
-mkdir -p "$REPO_ROOT/FORKS/cosmic"
-tar -xzf "$TMP_FORK_DIR/cosmic.tar.gz" --strip-components=1 -C "$REPO_ROOT/FORKS/cosmic"
-echo "COSMIC compositor snapshot extracted to FORKS/cosmic."
+# 4.1 COSMIC Compositor (COSMIC Epoch Stable)
+echo "  -> Cloning COSMIC compositor (tag epoch-1.0.0)..."
+if [ ! -d "$REPO_ROOT/FORKS/cosmic/.git" ]; then
+    rm -rf "$REPO_ROOT/FORKS/cosmic"
+    git clone --branch epoch-1.0.0 --depth 1 https://github.com/pop-os/cosmic-comp.git "$REPO_ROOT/FORKS/cosmic"
+    # Apply pure Wayland patch: strip xwayland and backend_x11
+    sed -i '/"backend_x11",/d' "$REPO_ROOT/FORKS/cosmic/Cargo.toml"
+    sed -i '/"xwayland",/d' "$REPO_ROOT/FORKS/cosmic/Cargo.toml"
+    sed -i 's/let mut with_xwayland = true;/let mut with_xwayland = false; \/\/ AMG-OS: Pure Wayland exclusively (SPEC Section 6.1)/' "$REPO_ROOT/FORKS/cosmic/src/lib.rs"
+fi
+echo "COSMIC compositor epoch-1.0.0 git clone established in FORKS/cosmic."
 
-# 4.2 Zen Browser Desktop
-echo "  -> Fetching Zen Browser desktop upstream snapshot..."
-curl -sL "https://github.com/zen-browser/desktop/archive/refs/heads/dev.tar.gz" \
-    -o "$TMP_FORK_DIR/zen.tar.gz"
-rm -rf "$REPO_ROOT/FORKS/zen"
-mkdir -p "$REPO_ROOT/FORKS/zen"
-tar -xzf "$TMP_FORK_DIR/zen.tar.gz" --strip-components=1 -C "$REPO_ROOT/FORKS/zen"
-echo "Zen Browser desktop snapshot extracted to FORKS/zen."
+# 4.2 Zen Browser Desktop (Zen Browser Stable)
+echo "  -> Cloning Zen Browser desktop (tag 1.9.1b)..."
+if [ ! -d "$REPO_ROOT/FORKS/zen/.git" ]; then
+    rm -rf "$REPO_ROOT/FORKS/zen"
+    git clone --branch 1.9.1b --depth 1 https://github.com/zen-browser/desktop.git "$REPO_ROOT/FORKS/zen"
+fi
+echo "Zen Browser desktop 1.9.1b git clone established in FORKS/zen."
 
 # 4.3 Ubuntu LTS Base & Kernel
 echo "  -> Setting up Ubuntu 24.04 LTS base rootfs and kernel configuration..."
 mkdir -p "$REPO_ROOT/FORKS/ubuntu/base/rootfs" "$REPO_ROOT/FORKS/ubuntu/kernel"
+TMP_FORK_DIR="$(mktemp -d)"
 curl -sL "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-amd64.tar.gz" \
     -o "$TMP_FORK_DIR/ubuntu-base.tar.gz"
 tar -xzf "$TMP_FORK_DIR/ubuntu-base.tar.gz" -C "$REPO_ROOT/FORKS/ubuntu/base/rootfs"
@@ -127,7 +129,6 @@ if [ -f "$REPO_ROOT/FORKS/ubuntu/base/strip.sh" ]; then
     bash "$REPO_ROOT/FORKS/ubuntu/base/strip.sh"
 fi
 echo "Ubuntu LTS base rootfs unpacked and stripped in FORKS/ubuntu/base/rootfs."
-
 rm -rf "$TMP_FORK_DIR"
 
 echo "================================================================================"

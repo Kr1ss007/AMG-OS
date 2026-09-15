@@ -7,40 +7,29 @@ use crate::{
     shell::{
         element::CosmicMapped,
         focus::target::PointerFocusTarget,
-        grabs::{GrabStartData, GrabType, ReleaseMode, ResizeEdge},
+        grabs::{GrabStartData, ReleaseMode, ResizeEdge},
     },
     utils::prelude::*,
 };
 use smithay::{
-    backend::input::{ButtonState, InputTime, TabletToolDescriptor},
+    backend::input::ButtonState,
     desktop::{WindowSurface, space::SpaceElement},
     input::{
         Seat,
         pointer::{
-            AxisFrame as PointerAxisFrame, ButtonEvent as PointerButtonEvent, CursorIcon,
-            GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-            GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
-            GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
-            MotionEvent as PointerMotionEvent, PointerGrab, PointerInnerHandle,
+            AxisFrame, ButtonEvent, CursorIcon, GestureHoldBeginEvent, GestureHoldEndEvent,
+            GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
+            GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab, PointerInnerHandle,
             RelativeMotionEvent,
         },
-        tablet::{
-            TabletSeatHandler,
-            tool::{
-                AxisFrame as TabletAxisFrame, ButtonEvent as TabletButtonEvent,
-                DownEvent as TabletDownEvent, GrabStartData as TabletGrabStartData,
-                MotionEvent as TabletMotionEvent, ProximityInEvent, ProximityOutEvent,
-                TabletToolGrab, TabletToolInnerHandle, UpEvent as TabletUpEvent,
-            },
-        },
         touch::{
-            DownEvent as TouchDownEvent, GrabStartData as TouchGrabStartData,
-            MotionEvent as TouchMotionEvent, OrientationEvent, ShapeEvent, TouchGrab,
-            TouchInnerHandle, UpEvent as TouchUpEvent,
+            DownEvent, GrabStartData as TouchGrabStartData, MotionEvent as TouchMotionEvent,
+            OrientationEvent, ShapeEvent, TouchGrab, TouchInnerHandle, UpEvent,
         },
     },
     output::Output,
-    utils::{IsAlive, Logical, Point, Rectangle, Size},
+    utils::{IsAlive, Logical, Point, Rectangle, Serial, Size},
 };
 use tracing::debug;
 
@@ -181,19 +170,10 @@ impl ResizeSurfaceGrab {
         false
     }
 
-    pub fn grab_type(&self) -> GrabType {
+    pub fn is_touch_grab(&self) -> bool {
         match self.start_data {
-            GrabStartData::Pointer(_) => GrabType::Pointer,
-            GrabStartData::Touch(_) => GrabType::Touch,
-            GrabStartData::TabletTool { .. } => GrabType::TabletTool,
-        }
-    }
-
-    pub fn tool(&self) -> Option<&TabletToolDescriptor> {
-        if let GrabStartData::TabletTool { tool, .. } = &self.start_data {
-            Some(tool)
-        } else {
-            None
+            GrabStartData::Touch(_) => true,
+            GrabStartData::Pointer(_) => false,
         }
     }
 }
@@ -204,7 +184,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
         data: &mut State,
         handle: &mut PointerInnerHandle<'_, State>,
         _focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
-        event: &PointerMotionEvent,
+        event: &MotionEvent,
     ) {
         // While the grab is active, no client has pointer focus
         handle.motion(data, None, event);
@@ -229,7 +209,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
         &mut self,
         data: &mut State,
         handle: &mut PointerInnerHandle<'_, State>,
-        event: &PointerButtonEvent,
+        event: &ButtonEvent,
     ) {
         handle.button(data, event);
         match self.release {
@@ -250,7 +230,7 @@ impl PointerGrab<State> for ResizeSurfaceGrab {
         &mut self,
         data: &mut State,
         handle: &mut PointerInnerHandle<'_, State>,
-        details: PointerAxisFrame,
+        details: AxisFrame,
     ) {
         handle.axis(data, details)
     }
@@ -349,22 +329,24 @@ impl TouchGrab<State> for ResizeSurfaceGrab {
         data: &mut State,
         handle: &mut TouchInnerHandle<'_, State>,
         _focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
-        event: &TouchDownEvent,
+        event: &DownEvent,
+        seq: Serial,
     ) {
-        handle.down(data, None, event)
+        handle.down(data, None, event, seq)
     }
 
     fn up(
         &mut self,
         data: &mut State,
         handle: &mut TouchInnerHandle<'_, State>,
-        event: &TouchUpEvent,
+        event: &UpEvent,
+        seq: Serial,
     ) {
         if event.slot == <Self as TouchGrab<State>>::start_data(self).slot {
             handle.unset_grab(self, data);
         }
 
-        handle.up(data, event);
+        handle.up(data, event, seq);
     }
 
     fn motion(
@@ -373,6 +355,7 @@ impl TouchGrab<State> for ResizeSurfaceGrab {
         handle: &mut TouchInnerHandle<'_, State>,
         _focus: Option<(PointerFocusTarget, Point<f64, Logical>)>,
         event: &TouchMotionEvent,
+        seq: Serial,
     ) {
         if event.slot == <Self as TouchGrab<State>>::start_data(self).slot
             && self.update_location(event.location.as_global())
@@ -380,14 +363,14 @@ impl TouchGrab<State> for ResizeSurfaceGrab {
             handle.unset_grab(self, data);
         }
 
-        handle.motion(data, None, event);
+        handle.motion(data, None, event, seq);
     }
 
-    fn frame(&mut self, data: &mut State, handle: &mut TouchInnerHandle<'_, State>) {
-        handle.frame(data)
+    fn frame(&mut self, data: &mut State, handle: &mut TouchInnerHandle<'_, State>, seq: Serial) {
+        handle.frame(data, seq)
     }
 
-    fn cancel(&mut self, data: &mut State, handle: &mut TouchInnerHandle<'_, State>) {
+    fn cancel(&mut self, data: &mut State, handle: &mut TouchInnerHandle<'_, State>, _seq: Serial) {
         handle.unset_grab(self, data);
     }
 
@@ -396,8 +379,9 @@ impl TouchGrab<State> for ResizeSurfaceGrab {
         data: &mut State,
         handle: &mut TouchInnerHandle<'_, State>,
         event: &ShapeEvent,
+        seq: Serial,
     ) {
-        handle.shape(data, event)
+        handle.shape(data, event, seq)
     }
 
     fn orientation(
@@ -405,8 +389,9 @@ impl TouchGrab<State> for ResizeSurfaceGrab {
         data: &mut State,
         handle: &mut TouchInnerHandle<'_, State>,
         event: &OrientationEvent,
+        seq: Serial,
     ) {
-        handle.orientation(data, event)
+        handle.orientation(data, event, seq)
     }
 
     fn start_data(&self) -> &TouchGrabStartData<State> {
@@ -418,99 +403,6 @@ impl TouchGrab<State> for ResizeSurfaceGrab {
 
     fn unset(&mut self, _data: &mut State) {
         self.ungrab();
-    }
-}
-
-impl TabletToolGrab<State> for ResizeSurfaceGrab {
-    fn start_data(&self) -> &TabletGrabStartData<State> {
-        match &self.start_data {
-            GrabStartData::TabletTool { data, .. } => data,
-            _ => unreachable!(),
-        }
-    }
-
-    fn proximity_out(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        event: &ProximityOutEvent,
-    ) {
-        handle.unset_grab(self, data, event.serial, event.time, true);
-        handle.proximity_out(data, event);
-    }
-
-    fn motion(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        _focus: Option<(<State as TabletSeatHandler>::ToolFocus, Point<f64, Logical>)>,
-        event: &TabletMotionEvent,
-    ) {
-        if self.update_location(event.location.as_global()) {
-            handle.unset_grab(self, data, event.serial, event.time, true);
-        }
-
-        handle.motion(data, None, event);
-    }
-
-    fn down(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        event: &TabletDownEvent,
-    ) {
-        handle.down(data, event)
-    }
-
-    fn up(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        event: &TabletUpEvent,
-    ) {
-        handle.unset_grab(self, data, event.serial, event.time, true);
-        handle.up(data, event);
-    }
-
-    fn button(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        event: &TabletButtonEvent,
-    ) {
-        handle.button(data, event)
-    }
-
-    fn axis(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        frame: TabletAxisFrame,
-    ) {
-        handle.axis(data, frame)
-    }
-
-    fn frame(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        time: InputTime,
-    ) {
-        handle.frame(data, time)
-    }
-
-    fn unset(&mut self, _data: &mut State) {
-        self.ungrab()
-    }
-
-    fn proximity_in(
-        &mut self,
-        data: &mut State,
-        handle: &mut TabletToolInnerHandle<'_, State>,
-        _focus: Option<(<State as TabletSeatHandler>::ToolFocus, Point<f64, Logical>)>,
-        event: &ProximityInEvent,
-    ) {
-        handle.proximity_in(data, None, event);
     }
 }
 
@@ -633,10 +525,10 @@ impl ResizeSurfaceGrab {
             };
 
             // Finish resizing.
-            if let Some(ResizeState::WaitingForCommit(_)) = *resize_state
-                && !window.is_resizing(false).unwrap_or(false)
-            {
-                *resize_state = None;
+            if let Some(ResizeState::WaitingForCommit(_)) = *resize_state {
+                if !window.is_resizing(false).unwrap_or(false) {
+                    *resize_state = None;
+                }
             }
             std::mem::drop(resize_state);
 
@@ -651,7 +543,7 @@ impl ResizeSurfaceGrab {
                             );
                         }
                         WindowSurface::X11(surface) => {
-                            let mut geometry = surface.last_configure();
+                            let mut geometry = surface.geometry();
                             geometry.loc += (location - new_location).as_logical();
                             let _ = surface.configure(geometry);
                         }

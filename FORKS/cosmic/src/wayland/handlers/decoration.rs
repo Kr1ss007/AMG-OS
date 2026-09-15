@@ -1,7 +1,7 @@
 use std::{cell::RefCell, sync::Mutex};
 
-use cosmic_comp_config::DecorationPreference;
 use smithay::{
+    delegate_kde_decoration, delegate_xdg_decoration,
     desktop::Window,
     reexports::{
         wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as XdgMode,
@@ -21,7 +21,7 @@ use smithay::{
 };
 use wayland_backend::protocol::WEnum;
 
-use crate::{shell::CosmicMapped, state::State};
+use crate::state::State;
 
 pub struct PreferredDecorationMode(RefCell<Option<XdgMode>>);
 
@@ -30,7 +30,7 @@ impl PreferredDecorationMode {
         window
             .user_data()
             .get::<PreferredDecorationMode>()
-            .is_none_or(|mode| mode.0.borrow().is_none())
+            .is_none()
     }
 
     pub fn mode(window: &Window) -> Option<XdgMode> {
@@ -54,72 +54,6 @@ impl PreferredDecorationMode {
     }
 }
 
-impl State {
-    pub fn default_decoration(&self) -> DecorationPreference {
-        self.common.config.cosmic_conf.decoration_preference
-    }
-
-    pub fn update_decorations(&self) {
-        let shell = self.common.shell.read();
-
-        let update = |mapped: &CosmicMapped| {
-            let mode = if mapped.is_stack() {
-                XdgMode::ServerSide
-            } else {
-                XdgMode::from_preference(self.default_decoration())
-            };
-            for (window, _) in mapped.windows() {
-                if PreferredDecorationMode::is_unset(&window.0)
-                    && let Some(toplevel) = window.0.toplevel()
-                    && toplevel.with_committed_state(|state| {
-                        state.is_some_and(|state| state.decoration_mode.is_some())
-                    })
-                {
-                    toplevel.with_pending_state(|state| {
-                        state.decoration_mode = Some(mode);
-                    });
-                    toplevel.send_configure();
-                }
-            }
-        };
-
-        for set in shell.workspaces.sets.values() {
-            set.sticky_layer.mapped().for_each(update);
-        }
-
-        for space in shell.workspaces.spaces() {
-            space.mapped().for_each(update);
-            space
-                .minimized_windows
-                .iter()
-                .filter_map(|m| m.mapped())
-                .for_each(update);
-        }
-    }
-}
-
-trait FromDecorationPreference {
-    fn from_preference(preference: DecorationPreference) -> Self;
-}
-
-impl FromDecorationPreference for XdgMode {
-    fn from_preference(preference: DecorationPreference) -> Self {
-        match preference {
-            DecorationPreference::ClientSide => XdgMode::ClientSide,
-            DecorationPreference::ServerSide => XdgMode::ServerSide,
-        }
-    }
-}
-
-impl FromDecorationPreference for KdeMode {
-    fn from_preference(preference: DecorationPreference) -> Self {
-        match preference {
-            DecorationPreference::ClientSide => KdeMode::Client,
-            DecorationPreference::ServerSide => KdeMode::Server,
-        }
-    }
-}
-
 pub type KdeDecorationData = Mutex<KdeDecorationSurfaceState>;
 #[derive(Debug, Default)]
 pub struct KdeDecorationSurfaceState {
@@ -134,23 +68,20 @@ impl XdgDecorationHandler for State {
             let mode = if mapped.is_stack() {
                 XdgMode::ServerSide
             } else {
-                XdgMode::from_preference(self.default_decoration())
+                XdgMode::ClientSide
             };
 
             if let Some((window, _)) = mapped
                 .windows()
                 .find(|(window, _)| window.wl_surface().as_deref() == Some(toplevel.wl_surface()))
-                && let Some(toplevel) = window.0.toplevel()
             {
-                toplevel.with_pending_state(|state| {
-                    state.decoration_mode = Some(mode);
-                });
-                toplevel.send_configure();
+                if let Some(toplevel) = window.0.toplevel() {
+                    toplevel.with_pending_state(|state| {
+                        state.decoration_mode = Some(mode);
+                    });
+                    toplevel.send_configure();
+                }
             }
-        } else {
-            toplevel.with_pending_state(|state| {
-                state.decoration_mode = Some(XdgMode::from_preference(self.default_decoration()))
-            })
         }
     }
 
@@ -160,55 +91,34 @@ impl XdgDecorationHandler for State {
             if let Some((window, _)) = mapped
                 .windows()
                 .find(|(window, _)| window.wl_surface().as_deref() == Some(toplevel.wl_surface()))
-                && let Some(toplevel) = window.0.toplevel()
             {
-                PreferredDecorationMode::update(&window.0, Some(mode));
-                toplevel.with_pending_state(|state| {
-                    state.decoration_mode = Some(mode);
-                });
-                toplevel.send_configure();
+                if let Some(toplevel) = window.0.toplevel() {
+                    PreferredDecorationMode::update(&window.0, Some(mode));
+                    toplevel.with_pending_state(|state| {
+                        state.decoration_mode = Some(mode);
+                    });
+                    toplevel.send_configure();
+                }
             }
         } else {
             toplevel.with_pending_state(|state| state.decoration_mode = Some(mode));
-            if let Some(pending) = shell
-                .pending_windows
-                .iter()
-                .find(|pending| pending.surface.0.toplevel().is_some_and(|t| t == &toplevel))
-            {
-                PreferredDecorationMode::update(&pending.surface.0, Some(mode));
-            }
         }
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
         let shell = self.common.shell.read();
-        if let Some(mapped) = shell.element_for_surface(toplevel.wl_surface())
-            && let Some((window, _)) = mapped
+        if let Some(mapped) = shell.element_for_surface(toplevel.wl_surface()) {
+            if let Some((window, _)) = mapped
                 .windows()
                 .find(|(window, _)| window.wl_surface().as_deref() == Some(toplevel.wl_surface()))
-            && let Some(toplevel) = window.0.toplevel()
-        {
-            let mode = if mapped.is_stack() {
-                XdgMode::ServerSide
-            } else {
-                XdgMode::from_preference(self.default_decoration())
-            };
-
-            PreferredDecorationMode::update(&window.0, None);
-            toplevel.with_pending_state(|state| {
-                state.decoration_mode = Some(mode);
-            });
-            toplevel.send_configure();
-        } else {
-            toplevel.with_pending_state(|state| {
-                state.decoration_mode = Some(XdgMode::from_preference(self.default_decoration()))
-            });
-            if let Some(pending) = shell
-                .pending_windows
-                .iter()
-                .find(|pending| pending.surface.0.toplevel().is_some_and(|t| t == &toplevel))
             {
-                PreferredDecorationMode::update(&pending.surface.0, None);
+                if let Some(toplevel) = window.0.toplevel() {
+                    PreferredDecorationMode::update(&window.0, None);
+                    toplevel.with_pending_state(|state| {
+                        state.decoration_mode = None;
+                    });
+                    toplevel.send_configure();
+                }
             }
         }
     }
@@ -224,10 +134,10 @@ impl KdeDecorationHandler for State {
             if mapped.is_stack() {
                 KdeMode::Server
             } else {
-                KdeMode::from_preference(self.default_decoration())
+                KdeMode::Client
             }
         } else {
-            KdeMode::from_preference(self.default_decoration())
+            KdeMode::Client
         };
 
         with_states(surface, |states| {
@@ -280,3 +190,6 @@ impl KdeDecorationHandler for State {
         });
     }
 }
+
+delegate_xdg_decoration!(State);
+delegate_kde_decoration!(State);

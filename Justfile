@@ -14,6 +14,10 @@ check:
 build:
     cargo build --workspace --release
 
+# Build full operating system disk image
+build-image:
+    bash scripts/build-image.sh
+
 # Run automated tests across all workspace crates
 test:
     cargo test --workspace

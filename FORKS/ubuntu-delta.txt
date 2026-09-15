@@ -7,7 +7,10 @@ Every divergence from upstream Ubuntu LTS is documented here.
 Base: Ubuntu 24.04 LTS (Noble Numbat) with Canonical HWE kernel stack.
 
 SECTION 1. KERNEL DIVERGENCE (AMGOS SPEC SECTION 2.1)
-Source:     Ubuntu LTS kernel with Canonical HWE patch set.
+Source:     Ubuntu LTS kernel with Canonical HWE patch set
+            (https://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble)
+Branch:     hwe-6.11-next
+Commit:     28e5daf6ca5bdc7104d1d5877c7113e578c94e9e
 Language:   C (kernel only, untouched, upstream).
 Policy:     No custom kernel patches except those required for
             framebuffer continuity and boot silence.

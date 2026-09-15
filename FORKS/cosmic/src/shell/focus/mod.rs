@@ -1,22 +1,17 @@
 use crate::{
-    shell::{CosmicSurface, MinimizedWindow, Shell, Trigger, element::CosmicMapped},
-    state::{Common, State},
+    shell::{CosmicSurface, MinimizedWindow, Shell, element::CosmicMapped},
+    state::Common,
     utils::prelude::*,
-    wayland::{
-        handlers::{xdg_shell::PopupGrabData, xwayland_keyboard_grab::XWaylandGrabSeatData},
-        protocols::session_lock_layer::layer_show_on_lock,
-    },
+    wayland::handlers::{xdg_shell::PopupGrabData, xwayland_keyboard_grab::XWaylandGrabSeatData},
 };
 use indexmap::IndexSet;
 use smithay::{
-    backend::input::InputTime,
-    desktop::{PopupUngrabStrategy, find_popup_root_surface, layer_map_for_output},
+    desktop::{PopupUngrabStrategy, layer_map_for_output},
     input::{Seat, pointer::MotionEvent},
     output::Output,
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     utils::{IsAlive, Point, SERIAL_COUNTER, Serial},
     wayland::{
-        pointer_constraints::with_pointer_constraint,
         seat::WaylandFocus,
         selection::{data_device::set_data_device_focus, primary_selection::set_primary_focus},
         shell::wlr_layer::{KeyboardInteractivity, Layer},
@@ -216,29 +211,6 @@ impl Shell {
         state.common.shell.write().update_active();
     }
 
-    // We suppress Element(X) to Fullscreen(X) transition to avoid
-    // loss of focus by the X window when having a transition to fullscreen
-    // but in the case of X11 unmap/map the leave/enter needs to happen for the X11
-    // internal state to be focused on the window
-    pub fn set_focus_on_x11_map(
-        state: &mut State,
-        target: &KeyboardFocusTarget,
-        seat: &Seat<State>,
-        update_cursor: bool,
-    ) {
-        let need_reset = seat
-            .get_keyboard()
-            .and_then(|keyboard| keyboard.current_focus())
-            .and_then(|current| current.x11_surface())
-            .is_some_and(|current| Some(current) == target.x11_surface());
-
-        if need_reset {
-            update_focus_state(seat, None, state, None, false);
-        }
-
-        Shell::set_focus(state, Some(target), seat, None, update_cursor);
-    }
-
     pub fn append_focus_stack(&mut self, target: impl Into<FocusTarget>, seat: &Seat<State>) {
         let target = target.into();
         if target.is_minimized() {
@@ -266,9 +238,10 @@ impl Shell {
                 .user_data()
                 .get::<PopupGrabData>()
                 .and_then(|x| x.take())
-                && !popup_grab.has_ended()
             {
-                popup_grab.ungrab(PopupUngrabStrategy::All);
+                if !popup_grab.has_ended() {
+                    popup_grab.ungrab(PopupUngrabStrategy::All);
+                }
             }
         }
     }
@@ -315,18 +288,22 @@ impl Shell {
             }
 
             let workspace = &mut set.workspaces[set.active];
-            for fs in workspace.get_fullscreen_surfaces() {
-                let is_focused = self.seats.iter().any(|seat| {
+            if let Some(fullscreen) = workspace.get_fullscreen() {
+                if self.seats.iter().any(|seat| {
                     if let Some(KeyboardFocusTarget::Fullscreen(s)) =
                         seat.get_keyboard().unwrap().current_focus()
                     {
-                        s == fs.surface
+                        &s == fullscreen
                     } else {
                         false
                     }
-                });
-                fs.surface.set_activated(is_focused);
-                fs.surface.send_configure();
+                }) {
+                    fullscreen.set_activated(true);
+                    fullscreen.send_configure();
+                } else {
+                    fullscreen.set_activated(false);
+                    fullscreen.send_configure();
+                }
             }
             for focused in focused_windows.iter() {
                 raise_with_children(&mut workspace.floating_layer, focused);
@@ -371,20 +348,6 @@ fn update_focus_state(
 ) {
     // update keyboard focus
     if let Some(keyboard) = seat.get_keyboard() {
-        // remove constraint when target changed
-        let old_focus = keyboard.current_focus();
-        if let Some(old_target) = old_focus
-            && target != Some(&old_target)
-            && let Some(surface) = old_target.wl_surface()
-            && let Some(pointer) = seat.get_pointer()
-        {
-            with_pointer_constraint(&surface, &pointer, |constraint| {
-                if let Some(constraint) = constraint {
-                    constraint.deactivate();
-                }
-            });
-        }
-
         if should_update_cursor
             && state.common.config.cosmic_conf.cursor_follows_focus
             && target.is_some()
@@ -405,14 +368,6 @@ fn update_focus_state(
                     .cloned()
                     .unwrap_or(seat.active_output());
 
-                crate::input::update_output_image_copy_cursor_position(
-                    &shell,
-                    &state.common.clock,
-                    &output,
-                    seat,
-                    new_pos,
-                );
-
                 let focus = State::surface_under(new_pos, &output, &shell)
                     .map(|(focus, loc)| (focus, loc.as_logical()));
                 //drop here to avoid multiple borrows
@@ -423,7 +378,7 @@ fn update_focus_state(
                     &MotionEvent {
                         location: new_pos.as_logical(),
                         serial: SERIAL_COUNTER.next_serial(),
-                        time: InputTime::now(),
+                        time: 0,
                     },
                 );
             }
@@ -546,28 +501,31 @@ impl Common {
                         trace!("Wrong Window, focus fixup");
                     }
                 } else {
-                    if let KeyboardFocusTarget::Popup(_) = target
-                        && let Some(popup_grab) = seat
+                    if let KeyboardFocusTarget::Popup(_) = target {
+                        if let Some(popup_grab) = seat
                             .user_data()
                             .get::<PopupGrabData>()
                             .and_then(|x| x.take())
-                        && !popup_grab.has_ended()
-                        && let Some(new) = popup_grab.current_grab()
-                    {
-                        trace!("restore focus to previous popup grab");
-                        std::mem::drop(shell);
-                        // TODO: verify whether cursor should be updated at end of popup grab
-                        update_focus_state(
-                            seat,
-                            Some(&new),
-                            state,
-                            Some(SERIAL_COUNTER.next_serial()),
-                            false,
-                        );
-                        seat.user_data()
-                            .get_or_insert::<PopupGrabData, _>(PopupGrabData::default)
-                            .set(Some(popup_grab));
-                        continue;
+                        {
+                            if !popup_grab.has_ended() {
+                                if let Some(new) = popup_grab.current_grab() {
+                                    trace!("restore focus to previous popup grab");
+                                    std::mem::drop(shell);
+                                    // TODO: verify whether cursor should be updated at end of popup grab
+                                    update_focus_state(
+                                        seat,
+                                        Some(&new),
+                                        state,
+                                        Some(SERIAL_COUNTER.next_serial()),
+                                        false,
+                                    );
+                                    seat.user_data()
+                                        .get_or_insert::<PopupGrabData, _>(PopupGrabData::default)
+                                        .set(Some(popup_grab));
+                                    continue;
+                                }
+                            }
+                        }
                     }
                     trace!("Surface dead, focus fixup");
                 }
@@ -589,9 +547,10 @@ impl Common {
                     .user_data()
                     .get::<PopupGrabData>()
                     .and_then(|x| x.take())
-                    && !popup_grab.has_ended()
                 {
-                    popup_grab.ungrab(PopupUngrabStrategy::All);
+                    if !popup_grab.has_ended() {
+                        popup_grab.ungrab(PopupUngrabStrategy::All);
+                    }
                 }
 
                 // update keyboard focus
@@ -630,15 +589,8 @@ fn focus_target_is_valid(
     output: &Output,
     target: KeyboardFocusTarget,
 ) -> bool {
-    // If a session lock is active, only lock surfaces and lock layers can be focused
+    // If a session lock is active, only lock surfaces can be focused
     if shell.session_lock.is_some() {
-        if let KeyboardFocusTarget::LayerSurface(layer) = &target {
-            return layer_show_on_lock(layer.wl_surface());
-        } else if let KeyboardFocusTarget::Popup(popup) = &target
-            && let Ok(root) = find_popup_root_surface(popup)
-        {
-            return layer_show_on_lock(&root);
-        }
         return matches!(target, KeyboardFocusTarget::LockSurface(_));
     }
 
@@ -699,9 +651,7 @@ fn focus_target_is_valid(
             .has_node(&node),
         KeyboardFocusTarget::Fullscreen(window) => {
             let workspace = shell.active_space(output).unwrap();
-            workspace
-                .get_fullscreen_surfaces()
-                .any(|f| f.surface == window)
+            workspace.get_fullscreen().is_some_and(|w| w == &window)
         }
         KeyboardFocusTarget::Popup(_) => true,
         KeyboardFocusTarget::LockSurface(_) => false,
@@ -730,23 +680,17 @@ fn update_focus_target(
             .cloned()
             .map(KeyboardFocusTarget::from)
     } else {
-        let workspace = shell.active_space(output).unwrap();
-
-        if let Some(Trigger::KeyboardSwap(_, desc)) = shell.overview_mode().0.active_trigger()
-            && workspace.handle == desc.handle
-            && workspace.tiling_layer.has_node(&desc.node)
-            && let Some(focus) = workspace.tiling_layer.node_desc_to_focus(desc)
-        {
-            return Some(focus);
-        }
-
-        workspace
+        shell
+            .active_space(output)
+            .unwrap()
             .focus_stack
             .get(seat)
             .last()
             .cloned()
             .map(Into::<KeyboardFocusTarget>::into)
             .or_else(|| {
+                let workspace = shell.active_space(output).unwrap();
+
                 workspace
                     .mapped()
                     .next()
@@ -754,9 +698,9 @@ fn update_focus_target(
                     .map(KeyboardFocusTarget::Element)
                     .or_else(|| {
                         workspace
-                            .get_fullscreen(seat)
+                            .get_fullscreen()
                             .cloned()
-                            .map(|fs| KeyboardFocusTarget::Fullscreen(fs.surface))
+                            .map(KeyboardFocusTarget::Fullscreen)
                     })
             })
     }
@@ -779,7 +723,7 @@ fn update_pointer_focus(state: &mut State, seat: &Seat<State>) {
                 &MotionEvent {
                     location: pointer.current_location(),
                     serial: SERIAL_COUNTER.next_serial(),
-                    time: InputTime::now(),
+                    time: state.common.clock.now().as_millis(),
                 },
             );
         }

@@ -237,10 +237,11 @@ where
                     window_from_handle::<<D as ToplevelInfoHandler>::Window>(toplevel).unwrap();
                 if let Some(toplevel_state) = window.user_data().get::<ToplevelState>() {
                     let mut toplevel_state = toplevel_state.lock().unwrap();
-                    toplevel_state
-                        .rectangles
-                        .retain(|(s, _)| s.id() != surface.id());
-                    if width != 0 || height != 0 {
+                    if width == 0 && height == 0 {
+                        toplevel_state
+                            .rectangles
+                            .retain(|(s, _)| s.id() != surface.id());
+                    } else {
                         toplevel_state.rectangles.push((
                             surface.downgrade(),
                             Rectangle::new((x, y).into(), (width, height).into()),
@@ -257,9 +258,10 @@ where
                 let window = window_from_handle(toplevel).unwrap();
                 if let Some(workspace_handle) =
                     state.workspace_state().get_ext_workspace_handle(&workspace)
-                    && let Some(output) = Output::from_resource(&output)
                 {
-                    state.move_to_workspace(dh, &window, workspace_handle, output);
+                    if let Some(output) = Output::from_resource(&output) {
+                        state.move_to_workspace(dh, &window, workspace_handle, output);
+                    }
                 }
             }
             _ => unreachable!(),

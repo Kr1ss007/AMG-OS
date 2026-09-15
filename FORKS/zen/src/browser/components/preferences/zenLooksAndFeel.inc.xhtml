@@ -1,8 +1,4 @@
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
-<script type="text/javascript" src="chrome://browser/content/preferences/zen-settings.js"/>
+<script src="chrome://browser/content/preferences/zen-settings.js"/>
 <html:template id="template-paneZenLooks">
 
 <hbox id="zenVerticalTabsCategory"
@@ -36,13 +32,42 @@
             data-l10n-id="zen-vertical-tabs-newtab-on-tab-list"
             preference="zen.tabs.show-newtab-vertical"/>
     <vbox class="indent">
+        <checkbox id="zenLooksAndFeelShowTopNewtabBorder"
+                data-l10n-id="zen-vertical-tabs-newtab-top-button-border"
+                preference="zen.view.show-newtab-button-border-top"/>
         <checkbox id="zenLooksAndFeelMoveNewtabToTop"
                 data-l10n-id="zen-vertical-tabs-newtab-top-button-up"
                 preference="zen.view.show-newtab-button-top"/>
     </vbox>
-    <html:div data-l10n-id="preferences-web-appearance-footer">
-        <html:a id="web-appearance-manage-themes-link" class="text-link" data-l10n-name="themes-link" href="about:addons" target="_blank" />
-    </html:div>
+</groupbox>
+
+<hbox id="zenLooksCategory"
+      class="subcategory"
+      hidden="true"
+      data-category="paneZenLooks">
+<html:h1 data-l10n-id="pane-zen-looks-title"/>
+</hbox>
+
+<groupbox id="zenLooksAndFeelGroup" data-category="paneZenLooks" hidden="true" class="highlighting-group">
+      <label><html:h2 data-l10n-id="zen-look-and-feel-colors-header"/></label>
+      <description class="description-deemphasized" data-l10n-id="zen-look-and-feel-colors-description" />
+
+      <hbox id="zenLooksAndFeelColorOptions" align="center">
+      </hbox>
+
+      <html:div id="zen-theme-builder-wrapper"></html:div>
+
+      <box class="indent">
+            <checkbox id="zenLooksAndFeelUseWorkspaceColors"
+                  data-l10n-id="zen-look-and-feel-use-workspace-colors"
+                  preference="zen.theme.color-prefs.use-workspace-colors"/>
+      </box>
+
+      <hbox id="zenLooksAndFeelGradientPickerParent"></hbox>
+
+      <html:div data-l10n-id="preferences-web-appearance-footer">
+            <html:a id="web-appearance-manage-themes-link" class="text-link" data-l10n-name="themes-link" href="about:addons" target="_blank" />
+        </html:div>
 </groupbox>
 
 <hbox id="zenThemeCategory"
@@ -53,23 +78,81 @@
 </hbox>
 
 <groupbox id="zenThemeGroup" data-category="paneZenLooks" hidden="true" class="highlighting-group">
+      <label><html:h2 data-l10n-id="zen-look-and-feel-urlbar-header"/></label>
+      <description class="description-deemphasized" data-l10n-id="zen-look-and-feel-urlbar-description" />
+
       <label><html:h2 data-l10n-id="zen-look-and-feel-compact-view-header"/></label>
       <description class="description-deemphasized" data-l10n-id="zen-look-and-feel-compact-view-description" />
 
+        <html:div id="ZenCompactModeStyle">
+            <form xmlns="http://www.w3.org/1999/xhtml" autocomplete="off" id="zen-compact-mode-styles-form">
+                  <label class="web-appearance-choice">
+                        <div class="web-appearance-choice-image-container">
+                            <div class="zen-compact-mode-styles-browser-wrapper" left="">
+                                <div></div>
+                            </div>
+                        </div>
+                        <div class="web-appearance-choice-footer">
+                        <input type="radio" name="web-appearance" value="left" data-l10n-id="preferences-web-appearance-choice-input-auto"
+                        /><span data-l10n-id="zen-compact-mode-styles-left" />
+                  </div>
+                  </label>
+                        <label class="web-appearance-choice">
+                        <div class="web-appearance-choice-image-container">
+                            <div class="zen-compact-mode-styles-browser-wrapper" top="">
+                                <div></div>
+                            </div>
+                        </div>
+                        <div class="web-appearance-choice-footer">
+                        <input type="radio" name="web-appearance" value="top" data-l10n-id="preferences-web-appearance-choice-input-light"
+                        /><span data-l10n-id="zen-compact-mode-styles-top" />
+                  </div>
+                  </label>
+                        <label class="web-appearance-choice">
+                        <div class="web-appearance-choice-image-container">
+                            <div class="zen-compact-mode-styles-browser-wrapper" both="">
+                                <div></div>
+                            </div>
+                        </div>
+                        <div class="web-appearance-choice-footer">
+                        <input type="radio" name="web-appearance" value="both" data-l10n-id="preferences-web-appearance-choice-input-dark"
+                        /><span data-l10n-id="zen-compact-mode-styles-both" />
+                  </div>
+                  </label>
+            </form>
+      </html:div>
       <vbox class="indent">
             <checkbox id="zenLooksAndFeelEnableToolbarFlashPopup"
                       data-l10n-id="zen-look-and-feel-compact-toolbar-flash-popup"
                       preference="zen.view.compact.toolbar-flash-popup"/>
+            <checkbox id="zenLooksAndFeelEnableThemedToolbarCompactMode"
+                      data-l10n-id="zen-look-and-feel-compact-toolbar-themed"
+                      preference="zen.view.compact.color-toolbar"/>
+            <checkbox id="zenLooksAndFeelEnableThemedSidebarCompactMode"
+                      data-l10n-id="zen-look-and-feel-compact-sidebar-themed"
+                      preference="zen.view.compact.color-sidebar"/>
       </vbox>
+</groupbox>
 
-      <label><html:h2 data-l10n-id="zen-look-and-feel-window-drag-header"/></label>
-      <description class="description-deemphasized" data-l10n-id="zen-look-and-feel-window-drag-description" />
+<hbox id="zenSidePanelsCategory"
+      class="subcategory"
+      hidden="true"
+      data-category="paneZenLooks">
+<html:h1 data-l10n-id="pane-zen-side-panels-title"/>
+</hbox>
 
-      <vbox class="indent">
-            <checkbox id="zenLooksAndFeelWindowDragEnabled"
-                  data-l10n-id="zen-window-drag-enabled"
-                  preference="zen.view.drag-window-from-content"/>
-      </vbox>
+<groupbox id="zenSidePanelsGroup" data-category="paneZenLooks" hidden="true" class="highlighting-group">
+      <label><html:h2 data-l10n-id="zen-side-panels-header"/></label>
+      <description class="description-deemphasized" data-l10n-id="zen-side-panels-description" />
+
+      <checkbox id="zenLooksAndFeelUseThemedToolbar"
+            data-l10n-id="zen-side-panels-enabled"
+            preference="zen.sidebar.enabled"/>
+      <hbox class="indent">
+            <checkbox id="zenLooksAndFeelSidebarCloseOnBlur"
+                  data-l10n-id="zen-side-panels-close-on-blur"
+                  preference="zen.sidebar.close-on-blur"/>
+      </hbox>
 </groupbox>
 
 <hbox id="zenGlanceCategory"
@@ -96,6 +179,7 @@
 #ifdef XP_MACOSX
                         <menuitem data-l10n-id="zen-glance-trigger-meta-click" value="meta"/>
 #endif
+                        <menuitem data-l10n-id="zen-glance-trigger-mantain-click" value="mantain" disabled="true"/>
                   </menupopup>
             </menulist>
         </hbox>
@@ -122,6 +206,22 @@
                   </menupopup>
             </menulist>
         </hbox>
+</groupbox>
+
+<hbox id="zenSplitViewCategory"
+      class="subcategory"
+      hidden="true"
+      data-category="paneZenLooks">
+<html:h1 data-l10n-id="zen-split-view-title"/>
+</hbox>
+
+<groupbox id="zenSplitViewGroup" data-category="paneZenLooks" hidden="true" class="highlighting-group">
+      <label><html:h2 data-l10n-id="zen-split-view-header"/></label>
+      <description class="description-deemphasized" data-l10n-id="zen-split-view-description" />
+
+      <checkbox id="zenLooksAndFeelSplitViewChangeOnHover"
+            data-l10n-id="zen-split-view-change-on-hover"
+            preference="zen.splitView.change-on-hover"/>
 </groupbox>
 
 </html:template>

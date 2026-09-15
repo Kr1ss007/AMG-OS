@@ -1,5 +1,3 @@
-#![allow(clippy::wrong_self_convention)]
-
 use std::sync::Mutex;
 
 use smithay::{

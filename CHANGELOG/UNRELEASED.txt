@@ -17,4 +17,16 @@ Affects: Process 1, Process 2, third-party app bridges.
 [VIRTUALIZATION] Configured Linux KVM and QEMU with UEFI OVMF runner script.
 Reason: Verification of hardware boot silence, GOP framebuffer handoff, and audio readiness.
 Affects: Testing pipeline.
+
+[DESKTOP] Implemented complete Top Global Menu Panel & System Tray Subsystem.
+Reason: Eliminate shallow mock struct and provide real FreeDesktop/KDE StatusNotifierItem (SNI) host, live Network status, live AVM Audio controls, live Power Profile switcher (Endurance, Balanced, MAX), Clock & Calendar, and Notification Center badge.
+Affects: Process 2 Desktop Session, third-party tray integrations.
+
+[COSMIC] Enforced Pure Wayland and stripped X11/XWayland from COSMIC Epoch.
+Reason: Strict adherence to AMGOS SPEC Section 6.1 (pure Wayland exclusively, zero X11/XWayland).
+Affects: FORKS/cosmic, amgos-desktop compositor.
+
+[BUILD] Implemented full operating system image build pipeline (scripts/build-image.sh).
+Reason: Real OS image generation with immutable SquashFS Base A, A/B partition layout, systemd service units (amgos-system.service, amgos-desktop.service, amgos.target), and boot silence cmdline.
+Affects: Deployment, release artifacts.
 ================================================================================

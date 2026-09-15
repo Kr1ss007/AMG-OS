@@ -1,0 +1,43 @@
+[Unit]
+Description=AMG-OS Process 1 (System Session)
+Documentation=file:///home/raven1zed/Documents/AMG-OS/docs/AMGOS_SPEC_v0.0.1.txt
+After=systemd-udevd.service local-fs.target network-pre.target sound.target
+Wants=systemd-udevd.service
+Conflicts=shutdown.target reboot.target halt.target
+DefaultDependencies=no
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/amgos/amgos-system
+Restart=always
+RestartSec=500ms
+TimeoutStopSec=10s
+KillMode=process
+
+# Sandboxing and Capabilities
+User=root
+Group=root
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_NET_ADMIN CAP_SYS_RAWIO CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_SYS_NICE
+AmbientCapabilities=CAP_SYS_ADMIN CAP_NET_ADMIN CAP_SYS_RAWIO CAP_SYS_PTRACE CAP_SYS_NICE
+
+# Process limits and I/O Priority
+LimitNOFILE=524288
+LimitMEMLOCK=infinity
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=50
+IOSchedulingClass=realtime
+IOSchedulingPriority=2
+
+# Security & Isolation
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/amgos /var/log/amgos /var/lib/amgos
+RuntimeDirectory=amgos
+RuntimeDirectoryMode=0755
+
+# Standard output redirection (zero TTY visibility per Section 4.1)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=amgos.target

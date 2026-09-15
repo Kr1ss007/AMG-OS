@@ -22,7 +22,7 @@ use crate::{
         prelude::OutputExt,
         quirks::{WORKSPACE_OVERVIEW_NAMESPACE, workspace_overview_is_open},
     },
-    wayland::protocols::{session_lock_layer::layer_show_on_lock, workspace::WorkspaceHandle},
+    wayland::protocols::workspace::WorkspaceHandle,
 };
 
 pub enum Stage<'a> {
@@ -32,12 +32,10 @@ pub enum Stage<'a> {
         layer: LayerSurface,
         popup: &'a PopupKind,
         location: Point<i32, Global>,
-        workspace_idx: usize,
     },
     LayerSurface {
         layer: LayerSurface,
         location: Point<i32, Global>,
-        workspace_idx: usize,
     },
     OverrideRedirect {
         surface: &'a X11Surface,
@@ -77,8 +75,6 @@ fn render_input_order_internal<R: 'static>(
     element_filter: ElementFilter,
     mut callback: impl FnMut(Stage) -> ControlFlow<Result<R, OutputNoMode>, ()>,
 ) -> ControlFlow<Result<R, OutputNoMode>, ()> {
-    // NOTE: Keep in sync with other surface iteration functions
-
     if shell
         .zoom_state
         .as_ref()
@@ -89,92 +85,7 @@ fn render_input_order_internal<R: 'static>(
 
     // Session Lock
     if let Some(session_lock) = &shell.session_lock {
-        for (layer, popup, location) in layer_popups(output, Layer::Overlay, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerPopup {
-                layer,
-                popup: &popup,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        for (layer, location) in layer_surfaces(output, Layer::Overlay, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        for (layer, popup, location) in layer_popups(output, Layer::Top, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerPopup {
-                layer,
-                popup: &popup,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        for (layer, location) in layer_surfaces(output, Layer::Top, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        callback(Stage::SessionLock(session_lock.surfaces.get(output)))?;
-        for (layer, popup, location) in layer_popups(output, Layer::Bottom, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerPopup {
-                layer,
-                popup: &popup,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        for (layer, popup, location) in layer_popups(output, Layer::Background, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerPopup {
-                layer,
-                popup: &popup,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        for (layer, location) in layer_surfaces(output, Layer::Bottom, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        for (layer, location) in layer_surfaces(output, Layer::Background, element_filter) {
-            if !layer_show_on_lock(layer.wl_surface()) {
-                continue;
-            }
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: current.1,
-            })?;
-        }
-        return ControlFlow::Continue(());
+        return callback(Stage::SessionLock(session_lock.surfaces.get(output)));
     }
 
     // Overlay-level layer shell
@@ -184,15 +95,10 @@ fn render_input_order_internal<R: 'static>(
             layer,
             popup: &popup,
             location,
-            workspace_idx: current.1,
         })?;
     }
     for (layer, location) in layer_surfaces(output, Layer::Overlay, element_filter) {
-        callback(Stage::LayerSurface {
-            layer,
-            location,
-            workspace_idx: current.1,
-        })?;
+        callback(Stage::LayerSurface { layer, location })?;
     }
 
     // calculate a bunch of stuff for workspace transitions
@@ -206,8 +112,8 @@ fn render_input_order_internal<R: 'static>(
     let output_size = output.geometry().size;
 
     // this is more hacky than I would like..
+    let fullscreen = workspace.fullscreen.as_ref().filter(|f| !f.is_animating());
     let seat = shell.seats.last_active();
-    let fullscreen = workspace.get_fullscreen(seat);
     let is_active_workspace = seat.focused_output().is_some_and(|output| {
         shell
             .active_space(&output)
@@ -238,7 +144,7 @@ fn render_input_order_internal<R: 'static>(
             let Some(workspace) = shell.workspaces.space_for_handle(previous) else {
                 return ControlFlow::Break(Err(OutputNoMode));
             };
-            let has_fullscreen = workspace.get_fullscreen(seat).is_some();
+            let has_fullscreen = workspace.fullscreen.is_some();
 
             let (forward, percentage) = match start {
                 WorkspaceDelta::Shortcut(st) => (
@@ -281,7 +187,7 @@ fn render_input_order_internal<R: 'static>(
             });
 
             (
-                Some((previous, previous_idx, has_fullscreen, offset)),
+                Some((previous, has_fullscreen, offset)),
                 Point::<i32, Logical>::from(match (layout, forward) {
                     (WorkspaceLayout::Vertical, true) => (0, output_size.h + offset.y),
                     (WorkspaceLayout::Vertical, false) => (0, -(output_size.h - offset.y)),
@@ -300,7 +206,6 @@ fn render_input_order_internal<R: 'static>(
                 layer,
                 popup: &popup,
                 location,
-                workspace_idx: current.1,
             })?;
         }
     }
@@ -315,23 +220,25 @@ fn render_input_order_internal<R: 'static>(
             .rev()
             .filter(|or| {
                 (*or)
-                    .last_configure()
+                    .geometry()
                     .as_global()
                     .intersection(output.geometry())
                     .is_some()
             })
-            .map(|or| (or, or.last_configure().loc.as_global()))
+            .map(|or| (or, or.geometry().loc.as_global()))
         {
             callback(Stage::OverrideRedirect { surface, location })?;
         }
 
         // sticky window popups
-        callback(Stage::StickyPopups(&set.sticky_layer))?;
+        if !has_focused_fullscreen {
+            callback(Stage::StickyPopups(&set.sticky_layer))?;
+        }
     }
 
     if element_filter != ElementFilter::LayerShellOnly {
         // previous workspace popups
-        if let Some((previous_handle, _, _, offset)) = previous.as_ref() {
+        if let Some((previous_handle, _, offset)) = previous.as_ref() {
             let Some(workspace) = shell.workspaces.space_for_handle(previous_handle) else {
                 return ControlFlow::Break(Err(OutputNoMode));
             };
@@ -360,22 +267,20 @@ fn render_input_order_internal<R: 'static>(
                 layer,
                 popup: &popup,
                 location,
-                workspace_idx: current.1,
             })?;
         }
     }
 
-    if let Some((_, idx, has_fullscreen, offset)) = previous.as_ref()
-        && !has_fullscreen
-    {
-        // previous bottom layer popups
-        for (layer, popup, location) in layer_popups(output, Layer::Bottom, element_filter) {
-            callback(Stage::LayerPopup {
-                layer,
-                popup: &popup,
-                location: location + offset.as_global(),
-                workspace_idx: **idx,
-            })?;
+    if let Some((_, has_fullscreen, offset)) = previous.as_ref() {
+        if !has_fullscreen {
+            // previous bottom layer popups
+            for (layer, popup, location) in layer_popups(output, Layer::Bottom, element_filter) {
+                callback(Stage::LayerPopup {
+                    layer,
+                    popup: &popup,
+                    location: location + offset.as_global(),
+                })?;
+            }
         }
     }
 
@@ -386,39 +291,34 @@ fn render_input_order_internal<R: 'static>(
                 layer,
                 popup: &popup,
                 location,
-                workspace_idx: current.1,
             })?;
         }
     }
 
-    if let Some((_, idx, has_fullscreen, offset)) = previous.as_ref()
-        && !has_fullscreen
-    {
-        // previous background layer popups
-        for (layer, popup, location) in layer_popups(output, Layer::Background, element_filter) {
-            callback(Stage::LayerPopup {
-                layer,
-                popup: &popup,
-                location: location + offset.as_global(),
-                workspace_idx: **idx,
-            })?;
+    if let Some((_, has_fullscreen, offset)) = previous.as_ref() {
+        if !has_fullscreen {
+            // previous background layer popups
+            for (layer, popup, location) in layer_popups(output, Layer::Background, element_filter)
+            {
+                callback(Stage::LayerPopup {
+                    layer,
+                    popup: &popup,
+                    location: location + offset.as_global(),
+                })?;
+            }
         }
     }
 
     if !has_focused_fullscreen {
         // top-layer shell
         for (layer, location) in layer_surfaces(output, Layer::Top, element_filter) {
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: current.1,
-            })?;
+            callback(Stage::LayerSurface { layer, location })?;
         }
-    }
 
-    // sticky windows
-    if element_filter != ElementFilter::LayerShellOnly {
-        callback(Stage::Sticky(&set.sticky_layer))?;
+        // sticky windows
+        if element_filter != ElementFilter::LayerShellOnly {
+            callback(Stage::Sticky(&set.sticky_layer))?;
+        }
     }
 
     if element_filter != ElementFilter::LayerShellOnly {
@@ -429,7 +329,7 @@ fn render_input_order_internal<R: 'static>(
         })?;
 
         // previous workspace windows
-        if let Some((previous_handle, _, _, offset)) = previous.as_ref() {
+        if let Some((previous_handle, _, offset)) = previous.as_ref() {
             let Some(workspace) = shell.workspaces.space_for_handle(previous_handle) else {
                 return ControlFlow::Break(Err(OutputNoMode));
             };
@@ -444,25 +344,17 @@ fn render_input_order_internal<R: 'static>(
         // bottom layer
         for (layer, mut location) in layer_surfaces(output, Layer::Bottom, element_filter) {
             location += current_offset.as_global();
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: current.1,
-            })?;
+            callback(Stage::LayerSurface { layer, location })?;
         }
     }
 
-    if let Some((_, idx, has_fullscreen, offset)) = previous.as_ref()
-        && !has_fullscreen
-    {
-        // previous bottom layer
-        for (layer, mut location) in layer_surfaces(output, Layer::Bottom, element_filter) {
-            location += offset.as_global();
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: **idx,
-            })?;
+    if let Some((_, has_fullscreen, offset)) = previous.as_ref() {
+        if !has_fullscreen {
+            // previous bottom layer
+            for (layer, mut location) in layer_surfaces(output, Layer::Bottom, element_filter) {
+                location += offset.as_global();
+                callback(Stage::LayerSurface { layer, location })?;
+            }
         }
     }
 
@@ -470,25 +362,17 @@ fn render_input_order_internal<R: 'static>(
         // background layer
         for (layer, mut location) in layer_surfaces(output, Layer::Background, element_filter) {
             location += current_offset.as_global();
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: current.1,
-            })?;
+            callback(Stage::LayerSurface { layer, location })?;
         }
     }
 
-    if let Some((_, idx, has_fullscreen, offset)) = previous.as_ref()
-        && !has_fullscreen
-    {
-        // previous background layer
-        for (layer, mut location) in layer_surfaces(output, Layer::Background, element_filter) {
-            location += offset.as_global();
-            callback(Stage::LayerSurface {
-                layer,
-                location,
-                workspace_idx: **idx,
-            })?;
+    if let Some((_, has_fullscreen, offset)) = previous.as_ref() {
+        if !has_fullscreen {
+            // previous background layer
+            for (layer, mut location) in layer_surfaces(output, Layer::Background, element_filter) {
+                location += offset.as_global();
+                callback(Stage::LayerSurface { layer, location })?;
+            }
         }
     }
 

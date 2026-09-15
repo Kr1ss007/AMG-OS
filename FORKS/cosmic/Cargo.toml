@@ -3,32 +3,32 @@ authors = ["Victoria Brekenfeld"]
 edition = "2024"
 license = "GPL-3.0-only"
 name = "cosmic-comp"
-version = "1.0.0"
-rust-version = "1.93"
+version = "0.1.0"
+rust-version = "1.85"
 
 [workspace]
 members = ["cosmic-comp-config"]
 
 [dependencies]
-anyhow = { version = "1.0.102", features = ["backtrace"] }
-bitflags = "2.11.0"
-calloop = { version = "0.14.4", features = ["executor", "stream"] }
+anyhow = { version = "1.0.100", features = ["backtrace"] }
+bitflags = "2.9.4"
+calloop = { version = "0.14.3", features = ["executor"] }
 cosmic-comp-config = { path = "cosmic-comp-config", features = [
     "libdisplay-info",
     "output",
 ] }
-cosmic-config = { git = "https://github.com/pop-os/libcosmic", features = [
+cosmic-config = { git = "https://github.com/pop-os/libcosmic/", features = [
     "calloop",
     "macro",
 ] }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", rev = "160b086", default-features = false, features = [
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", rev = "d0e95be", default-features = false, features = [
     "server",
 ] }
 cosmic-settings-config = { git = "https://github.com/pop-os/cosmic-settings-daemon" }
 cosmic-settings-daemon-config = { git = "https://github.com/pop-os/cosmic-settings-daemon", features = [
     "greeter",
 ] }
-cosmic-text = { version = "0.19", features = [
+cosmic-text = { git = "https://github.com/pop-os/cosmic-text.git", features = [
     "shape-run-cache",
 ] }
 libdisplay-info = "0.3.0"
@@ -39,53 +39,55 @@ i18n-embed = { version = "0.16", features = [
     "desktop-requester",
 ] }
 i18n-embed-fl = "0.10"
-iced_tiny_skia = { git = "https://github.com/pop-os/libcosmic" }
-iced_graphics = { git = "https://github.com/pop-os/libcosmic/", features = ["geometry"] }
-indexmap = "2.13"
+iced_tiny_skia = { git = "https://github.com/pop-os/libcosmic/" }
+indexmap = "2.11"
 keyframe = "1.1.1"
-libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false }
+libc = "0.2.177"
+libcosmic = { git = "https://github.com/pop-os/libcosmic/", default-features = false }
 libsystemd = { version = "0.7", optional = true }
 log-panics = { version = "2", features = ["with-backtrace"] }
 ordered-float = "5.1"
 png = "0.18"
 regex = "1"
-resvg = "0.45"
-ron = "0.12"
-rust-embed = { version = "8.11", features = ["debug-embed"] }
+ron = "0.11"
+rust-embed = { version = "8.7", features = ["debug-embed"] }
 sanitize-filename = "0.6.0"
+sendfd = "0.4.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2.0.18"
-jiff = "0.2"
+thiserror = "2.0.17"
+time = { version = "0.3.44", features = [
+    "macros",
+    "formatting",
+    "local-offset",
+] }
 tiny-skia = "0.11"
-tracing = { version = "0.1.44", features = [
+tracing = { version = "0.1.41", features = [
     "max_level_debug",
     "release_max_level_info",
 ] }
-tracing-journald = "0.3.2"
-tracing-subscriber = { version = "0.3.22", features = [
+tracing-journald = "0.3.1"
+tracing-subscriber = { version = "0.3.20", features = [
     "env-filter",
     "tracing-log",
 ] }
-tracy-client = { version = "0.18.4", default-features = false }
-wayland-backend = "0.3.12"
-wayland-scanner = "0.31.8"
+tracy-client = { version = "0.18.2", default-features = false }
+wayland-backend = "0.3.11"
+wayland-scanner = "0.31.7"
 xcursor = "0.3.10"
 xdg = "^3.0"
 xdg-user = "0.2.1"
 xkbcommon = "0.9"
-zbus = "5.14.0"
+zbus = "5.12.0"
 profiling = { version = "1.0" }
-rustix = { version = "1.1.4", features = ["process"] }
-rand = "0.10"
+rustix = { version = "1.1.2", features = ["process"] }
+rand = "0.9.2"
 # CLI arguments
-clap_lex = "1.0"
+clap_lex = "0.7"
 parking_lot = "0.12.5"
 logind-zbus = { version = "5.3.2", optional = true }
-futures-executor = { version = "0.3.32" }
-futures-util = "0.3.32"
-glam = { version = "0.33", default-features = false, features = ["std"] }
-smallvec = "1.15.2"
+futures-executor = { version = "0.3.31", features = ["thread-pool"] }
+futures-util = "0.3.31"
 
 [dependencies.id_tree]
 branch = "feature/copy_clone"
@@ -98,19 +100,16 @@ features = [
     "backend_drm",
     "backend_gbm",
     "backend_egl",
-    "backend_libei",
     "backend_libinput",
     "backend_session_libseat",
     "backend_udev",
     "backend_winit",
     "backend_vulkan",
-    "backend_x11",
     "desktop",
     "renderer_glow",
     "renderer_multi",
     "renderer_pixman",
     "wayland_frontend",
-    "xwayland",
 ]
 
 [dependencies.smithay-egui]
@@ -121,10 +120,8 @@ optional = true
 [features]
 debug = ["egui", "egui_plot", "smithay-egui", "anyhow/backtrace"]
 default = ["systemd"]
-logind = ["logind-zbus"]
-systemd = ["libsystemd", "logind"]
+systemd = ["libsystemd", "logind-zbus"]
 profile-with-tracy = ["profiling/profile-with-tracy", "tracy-client/default"]
-profile-with-tracy-gpu = ["profile-with-tracy", "smithay/tracy_gpu_profiling"]
 
 [profile.dev.package.tiny-skia]
 opt-level = 2
@@ -144,7 +141,7 @@ lto = "fat"
 
 [patch."https://github.com/pop-os/cosmic-protocols"]
 cosmic-protocols = { git = "https://github.com/pop-os//cosmic-protocols", branch = "main" }
+cosmic-client-toolkit = { git = "https://github.com/pop-os//cosmic-protocols", branch = "main" }
 
 [patch.crates-io]
-smithay = { git = "https://github.com/smithay/smithay.git", rev = "e3d461a" }
-smithay-egui = { git = "https://github.com/Smithay/smithay-egui.git", rev = "6511552" }
+smithay = { git = "https://github.com/smithay/smithay.git", rev = "cb9acba" }

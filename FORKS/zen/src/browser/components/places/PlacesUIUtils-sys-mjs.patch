@@ -1,8 +1,8 @@
 diff --git a/browser/components/places/PlacesUIUtils.sys.mjs b/browser/components/places/PlacesUIUtils.sys.mjs
-index 7c11a2004c87aa6f0c61cf05ca522c7471c7be71..0f92f9925221cadbd258402f1b6a86a71fdb42e9 100644
+index fbdd6a34b12d4d957f7a2d9d95df0bfd65ba3f61..baaf34536f557c69fce3cc43e6f12658514db39f 100644
 --- a/browser/components/places/PlacesUIUtils.sys.mjs
 +++ b/browser/components/places/PlacesUIUtils.sys.mjs
-@@ -61,6 +61,7 @@ class BookmarkState {
+@@ -58,6 +58,7 @@ class BookmarkState {
      info,
      tags = "",
      keyword = "",
@@ -10,7 +10,7 @@ index 7c11a2004c87aa6f0c61cf05ca522c7471c7be71..0f92f9925221cadbd258402f1b6a86a7
      isFolder = false,
      children = [],
      autosave = false,
-@@ -85,12 +86,18 @@ class BookmarkState {
+@@ -82,12 +83,18 @@ class BookmarkState {
        keyword,
        parentGuid: info.parentGuid,
        index,
@@ -29,7 +29,7 @@ index 7c11a2004c87aa6f0c61cf05ca522c7471c7be71..0f92f9925221cadbd258402f1b6a86a7
    /**
     * Save edited title for the bookmark
     *
-@@ -184,6 +191,14 @@ class BookmarkState {
+@@ -181,6 +188,14 @@ class BookmarkState {
        "BookmarkState::createBookmark"
      );
      this._guid = results?.[0];
@@ -44,7 +44,7 @@ index 7c11a2004c87aa6f0c61cf05ca522c7471c7be71..0f92f9925221cadbd258402f1b6a86a7
      return this._guid;
    }
  
-@@ -217,6 +232,14 @@ class BookmarkState {
+@@ -214,6 +229,14 @@ class BookmarkState {
        "BookmarkState::save::createFolder"
      );
      this._guid = results[0];
@@ -59,7 +59,7 @@ index 7c11a2004c87aa6f0c61cf05ca522c7471c7be71..0f92f9925221cadbd258402f1b6a86a7
      return this._guid;
    }
  
-@@ -303,11 +326,97 @@ class BookmarkState {
+@@ -300,11 +323,97 @@ class BookmarkState {
        await lazy.PlacesTransactions.batch(transactions, "BookmarkState::save");
      }
  
@@ -157,3 +157,20 @@ index 7c11a2004c87aa6f0c61cf05ca522c7471c7be71..0f92f9925221cadbd258402f1b6a86a7
    /**
     * Append transactions to update tags by given information.
     *
+@@ -902,8 +1011,15 @@ export var PlacesUIUtils = {
+     aNode,
+     aWhere,
+     aWindow,
+-    { aPrivate = false, userContextId = 0 } = {}
++    { aPrivate = false, userContextId = undefined } = {}
+   ) {
++    if (typeof userContextId == "undefined") {
++      try {
++        let browserWindow = getBrowserWindow(aWindow);
++        userContextId = browserWindow.ZenWorkspaces.getDefaultContainer();
++      } catch {}
++    }
++
+     if (
+       aNode &&
+       lazy.PlacesUtils.nodeIsURI(aNode) &&

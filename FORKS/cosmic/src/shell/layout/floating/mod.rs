@@ -6,15 +6,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use cosmic_comp_config::AppearanceConfig;
 use cosmic_settings_config::shortcuts::action::ResizeDirection;
 use keyframe::{ease, functions::EaseInOutCubic};
-use smallvec::SmallVec;
 use smithay::{
-    backend::{
-        drm::DrmNode,
-        renderer::element::{
-            RenderElement,
+    backend::renderer::{
+        ImportAll, ImportMem, Renderer,
+        element::{
+            AsRenderElements, RenderElement,
             utils::{Relocate, RelocateRenderElement, RescaleRenderElement},
         },
     },
@@ -61,7 +59,6 @@ pub struct FloatingLayout {
     hovered_stack: Option<(CosmicMapped, Rectangle<i32, Local>)>,
     dirty: AtomicBool,
     pub theme: cosmic::Theme,
-    pub appearance: AppearanceConfig,
 }
 
 #[derive(Debug)]
@@ -266,15 +263,10 @@ impl TiledCorners {
 }
 
 impl FloatingLayout {
-    pub fn new(
-        theme: cosmic::Theme,
-        appearance: AppearanceConfig,
-        output: &Output,
-    ) -> FloatingLayout {
+    pub fn new(theme: cosmic::Theme, output: &Output) -> FloatingLayout {
         let mut layout = Self {
             theme,
             last_output_size: output.geometry().size.as_local(),
-            appearance,
             ..Default::default()
         };
         layout.space.map_output(output, (0, 0));
@@ -299,7 +291,6 @@ impl FloatingLayout {
         for mapped in self
             .space
             .elements()
-            .filter(|w| w.alive())
             .cloned()
             .collect::<Vec<_>>()
             .into_iter()
@@ -314,10 +305,7 @@ impl FloatingLayout {
                     None,
                 );
             } else {
-                let Some(geometry) = self.space.element_geometry(&mapped) else {
-                    continue;
-                };
-                let geometry = geometry.to_f64();
+                let geometry = self.space.element_geometry(&mapped).unwrap().to_f64();
                 let new_loc = (
                     ((geometry.loc.x - old_output_geometry.loc.x).max(0.)
                         / old_output_geometry.size.w
@@ -393,14 +381,13 @@ impl FloatingLayout {
         } else {
             self.animations.remove(&mapped);
         }
-        // Restore to the corner this was snapped to if any
-        let snapped = mapped.floating_tiled.lock().unwrap().take();
-        if let Some(snapped) = snapped
-            && let Some(state) = mapped.maximized_state.lock().unwrap().as_mut()
-            && state.original_snapped.is_none()
-        {
-            state.original_snapped = Some(snapped);
-        };
+        if mapped.floating_tiled.lock().unwrap().take().is_some() {
+            if let Some(state) = mapped.maximized_state.lock().unwrap().as_mut() {
+                if let Some(real_old_geo) = *mapped.last_geometry.lock().unwrap() {
+                    state.original_geometry = real_old_geo;
+                }
+            };
+        }
         self.space
             .map_element(mapped, geometry.loc.as_logical(), true);
         self.space.refresh();
@@ -627,10 +614,6 @@ impl FloatingLayout {
         from: Rectangle<i32, Local>,
         position: Point<i32, Local>,
     ) {
-        if !mapped.alive() {
-            return;
-        }
-
         let output = self.space.outputs().next().unwrap().clone();
         let layers = layer_map_for_output(&output);
         let geometry = layers.non_exclusive_zone().as_local();
@@ -696,12 +679,8 @@ impl FloatingLayout {
                 mapped_geometry.size = last_size;
             }
         } else if !window.is_maximized(true) {
-            if window.active_window().has_pending_changes()
-                && let Some(pending_size) = window.pending_size()
-            {
+            if let Some(pending_size) = window.pending_size() {
                 mapped_geometry.size = pending_size.as_local();
-            } else if let Some(server_size) = window.last_server_size() {
-                mapped_geometry.size = server_size.as_local();
             }
             *window.last_geometry.lock().unwrap() = Some(mapped_geometry);
         }
@@ -743,11 +722,7 @@ impl FloatingLayout {
         self.space.element_geometry(elem).map(RectExt::as_local)
     }
 
-    pub fn popup_element_under(
-        &self,
-        location: Point<f64, Local>,
-        seat: &Seat<State>,
-    ) -> Option<KeyboardFocusTarget> {
+    pub fn popup_element_under(&self, location: Point<f64, Local>) -> Option<KeyboardFocusTarget> {
         self.space
             .elements()
             .rev()
@@ -768,7 +743,6 @@ impl FloatingLayout {
                 if e.focus_under(
                     point.as_logical(),
                     WindowSurfaceType::POPUP | WindowSurfaceType::SUBSURFACE,
-                    seat,
                 )
                 .is_some()
                 {
@@ -782,7 +756,6 @@ impl FloatingLayout {
     pub fn toplevel_element_under(
         &self,
         location: Point<f64, Local>,
-        seat: &Seat<State>,
     ) -> Option<KeyboardFocusTarget> {
         self.space
             .elements()
@@ -804,7 +777,6 @@ impl FloatingLayout {
                 if e.focus_under(
                     point.as_logical(),
                     WindowSurfaceType::TOPLEVEL | WindowSurfaceType::SUBSURFACE,
-                    seat,
                 )
                 .is_some()
                 {
@@ -818,7 +790,6 @@ impl FloatingLayout {
     pub fn popup_surface_under(
         &self,
         location: Point<f64, Local>,
-        seat: &Seat<State>,
     ) -> Option<(PointerFocusTarget, Point<f64, Local>)> {
         self.space
             .elements()
@@ -840,7 +811,6 @@ impl FloatingLayout {
                 e.focus_under(
                     point.as_logical(),
                     WindowSurfaceType::POPUP | WindowSurfaceType::SUBSURFACE,
-                    seat,
                 )
                 .map(|(surface, surface_offset)| {
                     (surface, render_location + surface_offset.as_local())
@@ -851,7 +821,6 @@ impl FloatingLayout {
     pub fn toplevel_surface_under(
         &self,
         location: Point<f64, Local>,
-        seat: &Seat<State>,
     ) -> Option<(PointerFocusTarget, Point<f64, Local>)> {
         self.space
             .elements()
@@ -873,7 +842,6 @@ impl FloatingLayout {
                 e.focus_under(
                     point.as_logical(),
                     WindowSurfaceType::TOPLEVEL | WindowSurfaceType::SUBSURFACE,
-                    seat,
                 )
                 .map(|(surface, surface_offset)| {
                     (surface, render_location + surface_offset.as_local())
@@ -1044,11 +1012,7 @@ impl FloatingLayout {
         if mapped.is_window() {
             // if it is just a window
             self.space.unmap_elem(&mapped);
-            mapped.convert_to_stack(
-                (&output, mapped.bbox()),
-                self.theme.clone(),
-                self.appearance,
-            );
+            mapped.convert_to_stack((&output, mapped.bbox()), self.theme.clone());
             self.map_internal(
                 mapped.clone(),
                 Some(location.as_local()),
@@ -1065,12 +1029,7 @@ impl FloatingLayout {
 
             self.space.unmap_elem(&mapped);
             let handle = mapped.loop_handle();
-            mapped.convert_to_surface(
-                first,
-                (&output, mapped.bbox()),
-                self.theme.clone(),
-                self.appearance,
-            );
+            mapped.convert_to_surface(first, (&output, mapped.bbox()), self.theme.clone());
             let mut new_elements = vec![mapped.clone()];
 
             // map the rest
@@ -1082,7 +1041,6 @@ impl FloatingLayout {
                     other,
                     handle.clone(),
                     self.theme.clone(),
-                    self.appearance,
                 ));
                 window.output_enter(&output, window.bbox());
 
@@ -1134,7 +1092,7 @@ impl FloatingLayout {
             StackMoveResult::Handled => MoveResult::Done,
             StackMoveResult::MoveOut(surface, loop_handle) => {
                 let mapped: CosmicMapped =
-                    CosmicWindow::new(surface, loop_handle, theme.clone(), self.appearance).into();
+                    CosmicWindow::new(surface, loop_handle, theme.clone()).into();
                 let output = seat.active_output();
                 let pos = self.space.element_geometry(element).unwrap().loc
                     + match direction {
@@ -1223,7 +1181,6 @@ impl FloatingLayout {
                         *maximized_state = Some(MaximizedState {
                             original_geometry: start_rectangle,
                             original_layer: layer,
-                            original_snapped: None,
                         });
                         std::mem::drop(maximized_state);
 
@@ -1304,7 +1261,7 @@ impl FloatingLayout {
         let Some(focused) = (match target {
             KeyboardFocusTarget::Popup(popup) => {
                 let Some(toplevel_surface) = (match popup {
-                    PopupKind::Xdg(_) => get_popup_toplevel(&popup),
+                    PopupKind::Xdg(xdg) => get_popup_toplevel(&xdg),
                     PopupKind::InputMethod(_) => unreachable!(),
                 }) else {
                     return MoveResult::None;
@@ -1350,7 +1307,7 @@ impl FloatingLayout {
             mapped.set_bounds(geometry.size.as_logical());
             let prev = self.space.element_geometry(&mapped).map(RectExt::as_local);
 
-            let window_geometry = if mapped.is_maximized(true) {
+            let window_geometry = if mapped.is_maximized(false) {
                 geometry
             } else {
                 prev.map(|mut rect| {
@@ -1443,10 +1400,9 @@ impl FloatingLayout {
         &self,
         renderer: &mut R,
         alpha: f32,
-        scanout_node: Option<DrmNode>,
-        push: &mut dyn FnMut(CosmicMappedRenderElement<R>),
-    ) where
-        R: AsGlowRenderer,
+    ) -> Vec<CosmicMappedRenderElement<R>>
+    where
+        R: Renderer + ImportAll + ImportMem + AsGlowRenderer,
         R::TextureId: Send + Clone + 'static,
         CosmicMappedRenderElement<R>: RenderElement<R>,
         CosmicWindowRenderElement<R>: RenderElement<R>,
@@ -1454,6 +1410,8 @@ impl FloatingLayout {
     {
         let output = self.space.outputs().next().unwrap();
         let output_scale = output.current_scale().fractional_scale();
+
+        let mut elements = Vec::default();
 
         for elem in self
             .animations
@@ -1469,17 +1427,19 @@ impl FloatingLayout {
                 .unwrap_or_else(|| (self.space.element_geometry(elem).unwrap().as_local(), alpha));
 
             let render_location = geometry.loc - elem.geometry().loc.as_local();
-            elem.push_popup_render_elements(
-                renderer,
-                render_location
-                    .as_logical()
-                    .to_physical_precise_round(output_scale),
-                output_scale.into(),
-                alpha,
-                scanout_node,
-                push,
+            elements.extend(
+                elem.popup_render_elements(
+                    renderer,
+                    render_location
+                        .as_logical()
+                        .to_physical_precise_round(output_scale),
+                    output_scale.into(),
+                    alpha,
+                ),
             );
         }
+
+        elements
     }
 
     #[profiling::function]
@@ -1491,10 +1451,9 @@ impl FloatingLayout {
         indicator_thickness: u8,
         alpha: f32,
         theme: &cosmic::theme::CosmicTheme,
-        scanout_node: Option<DrmNode>,
-        push: &mut dyn FnMut(CosmicMappedRenderElement<R>),
-    ) where
-        R: AsGlowRenderer,
+    ) -> Vec<CosmicMappedRenderElement<R>>
+    where
+        R: Renderer + ImportAll + ImportMem + AsGlowRenderer,
         R::TextureId: Send + Clone + 'static,
         CosmicMappedRenderElement<R>: RenderElement<R>,
         CosmicWindowRenderElement<R>: RenderElement<R>,
@@ -1506,7 +1465,8 @@ impl FloatingLayout {
             layers.non_exclusive_zone()
         };
         let output_scale = output.current_scale().fractional_scale();
-        let mut lower_elements = SmallVec::<[_; 4]>::new_const();
+
+        let mut elements = Vec::default();
 
         for elem in self
             .animations
@@ -1520,9 +1480,19 @@ impl FloatingLayout {
                 .get(elem)
                 .map(|anim| (*anim.previous_geometry(), alpha * anim.alpha()))
                 .unwrap_or_else(|| (self.space.element_geometry(elem).unwrap().as_local(), alpha));
-            let render_location = geometry.loc - elem.geometry().loc.as_local();
 
-            let maybe_map = if let Some(anim) = self.animations.get(elem) {
+            let render_location = geometry.loc - elem.geometry().loc.as_local();
+            let mut window_elements = elem.render_elements(
+                renderer,
+                render_location
+                    .as_logical()
+                    .to_physical_precise_round(output_scale),
+                output_scale.into(),
+                alpha,
+                None,
+            );
+
+            if let Some(anim) = self.animations.get(elem) {
                 let original_geo = anim.previous_geometry();
                 geometry = anim.geometry(
                     output_geometry,
@@ -1540,77 +1510,80 @@ impl FloatingLayout {
                     y: geometry.size.h as f64 / buffer_size.h as f64,
                 };
 
-                Some(move |element| match element {
-                    CosmicMappedRenderElement::Stack(elem) => {
-                        CosmicMappedRenderElement::MovingStack({
-                            let rescaled = RescaleRenderElement::from_element(
-                                elem,
-                                original_geo
-                                    .loc
-                                    .as_logical()
-                                    .to_physical_precise_round(output_scale),
-                                scale,
-                            );
+                window_elements = window_elements
+                    .into_iter()
+                    .map(|element| match element {
+                        CosmicMappedRenderElement::Stack(elem) => {
+                            CosmicMappedRenderElement::MovingStack({
+                                let rescaled = RescaleRenderElement::from_element(
+                                    elem,
+                                    original_geo
+                                        .loc
+                                        .as_logical()
+                                        .to_physical_precise_round(output_scale),
+                                    scale,
+                                );
 
-                            RelocateRenderElement::from_element(
-                                rescaled,
-                                (geometry.loc - original_geo.loc)
-                                    .as_logical()
-                                    .to_physical_precise_round(output_scale),
-                                Relocate::Relative,
-                            )
-                        })
-                    }
-                    CosmicMappedRenderElement::Window(elem) => {
-                        CosmicMappedRenderElement::MovingWindow({
-                            let rescaled = RescaleRenderElement::from_element(
-                                elem,
-                                original_geo
-                                    .loc
-                                    .as_logical()
-                                    .to_physical_precise_round(output_scale),
-                                scale,
-                            );
+                                RelocateRenderElement::from_element(
+                                    rescaled,
+                                    (geometry.loc - original_geo.loc)
+                                        .as_logical()
+                                        .to_physical_precise_round(output_scale),
+                                    Relocate::Relative,
+                                )
+                            })
+                        }
+                        CosmicMappedRenderElement::Window(elem) => {
+                            CosmicMappedRenderElement::MovingWindow({
+                                let rescaled = RescaleRenderElement::from_element(
+                                    elem,
+                                    original_geo
+                                        .loc
+                                        .as_logical()
+                                        .to_physical_precise_round(output_scale),
+                                    scale,
+                                );
 
-                            RelocateRenderElement::from_element(
-                                rescaled,
-                                (geometry.loc - original_geo.loc)
-                                    .as_logical()
-                                    .to_physical_precise_round(output_scale),
-                                Relocate::Relative,
-                            )
-                        })
-                    }
-                    x => x,
-                })
-            } else {
-                None
-            };
+                                RelocateRenderElement::from_element(
+                                    rescaled,
+                                    (geometry.loc - original_geo.loc)
+                                        .as_logical()
+                                        .to_physical_precise_round(output_scale),
+                                    Relocate::Relative,
+                                )
+                            })
+                        }
+                        x => x,
+                    })
+                    .collect();
+            }
 
             if focused == Some(elem) && !elem.is_maximized(false) {
-                let active_window_hint = crate::theme::active_window_hint(theme);
-                let radius = elem.corner_radius(geometry.size.as_logical(), indicator_thickness);
-
                 if let Some((mode, resize)) = resize_indicator.as_mut() {
                     let mut resize_geometry = geometry;
                     resize_geometry.loc -= (18, 18).into();
                     resize_geometry.size += (36, 36).into();
 
                     resize.resize(resize_geometry.size.as_logical());
-                    resize.output_enter(output);
-                    resize.push_render_elements(
-                        renderer,
-                        resize_geometry
-                            .loc
-                            .as_logical()
-                            .to_physical_precise_round(output_scale),
-                        output_scale.into(),
-                        alpha * mode.alpha().unwrap_or(1.0),
-                        &mut |elem| push(CosmicMappedRenderElement::Window(elem.into())),
-                        None,
-                    );
+                    resize.output_enter(output, Rectangle::default() /* unused */);
+                    window_elements = resize
+                        .render_elements::<CosmicWindowRenderElement<R>>(
+                            renderer,
+                            resize_geometry
+                                .loc
+                                .as_logical()
+                                .to_physical_precise_round(output_scale),
+                            output_scale.into(),
+                            alpha * mode.alpha().unwrap_or(1.0),
+                        )
+                        .into_iter()
+                        .map(CosmicMappedRenderElement::Window)
+                        .chain(window_elements.into_iter())
+                        .collect();
                 }
 
+                let active_window_hint = crate::theme::active_window_hint(theme);
+                let radius = elem.corner_radius(geometry.size.as_logical(), indicator_thickness);
                 if indicator_thickness > 0 {
                     let element = IndicatorShader::focus_element(
                         renderer,
@@ -1619,71 +1592,20 @@ impl FloatingLayout {
                         indicator_thickness,
                         radius,
                         alpha,
-                        output_scale,
                         [
                             active_window_hint.red,
                             active_window_hint.green,
                             active_window_hint.blue,
                         ],
                     );
-                    push(element.into());
+                    window_elements.insert(0, element.into());
                 }
             }
 
-            let map_anim = |elem| {
-                if let Some(map) = maybe_map {
-                    map(elem)
-                } else {
-                    elem
-                }
-            };
-
-            elem.push_render_elements(
-                renderer,
-                render_location
-                    .as_logical()
-                    .to_physical_precise_round(output_scale),
-                None,
-                output_scale.into(),
-                alpha,
-                None,
-                scanout_node,
-                &mut |elem| push(map_anim(elem)),
-                &mut |elem| lower_elements.push(map_anim(elem)),
-            );
-            if let Some(shadow_element) = elem.shadow_render_element(
-                renderer,
-                render_location
-                    .as_logical()
-                    .to_physical_precise_round(output_scale),
-                None,
-                output_scale.into(),
-                1.,
-                alpha,
-            ) {
-                push(map_anim(shadow_element));
-            }
-            for elem in lower_elements.drain(..) {
-                push(elem);
-            }
+            elements.extend(window_elements);
         }
-    }
 
-    pub fn snap_to_corner(&self, mapped: &CosmicMapped, corners: &TiledCorners) {
-        *mapped.floating_tiled.lock().unwrap() = Some(*corners);
-        mapped.set_tiled(true);
-        let snapped_geo = self.snapped_geometry(corners);
-        let output = self.space.outputs().next().unwrap();
-        mapped.set_geometry(snapped_geo.to_global(output));
-        mapped.configure();
-    }
-
-    fn snapped_geometry(&self, corners: &TiledCorners) -> Rectangle<i32, Local> {
-        let output = self.space.outputs().next().unwrap().clone();
-        let layers = layer_map_for_output(&output);
-        let non_exclusive = layers.non_exclusive_zone();
-        std::mem::drop(layers);
-        corners.relative_geometry(non_exclusive, self.gaps())
+        elements
     }
 
     fn gaps(&self) -> (i32, i32) {

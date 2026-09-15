@@ -3,7 +3,9 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            ExportMem, ImportAll, Offscreen, Renderer, damage::OutputDamageTracker,
+            ExportMem, ImportAll, Offscreen, Renderer,
+            damage::OutputDamageTracker,
+            element::{AsRenderElements, surface::WaylandSurfaceRenderElement},
             gles::GlesRenderbuffer,
         },
     },
@@ -14,32 +16,29 @@ use smithay::{
 use tracing::warn;
 
 use crate::{
-    backend::render::{RendererRef, element::AsGlowRenderer},
+    backend::render::RendererRef,
     shell::element::CosmicSurface,
     state::{State, advertised_node_for_surface},
 };
 
 pub fn screenshot_window(state: &mut State, surface: &CosmicSurface) {
-    fn render_window<R>(renderer: &mut R, window: &CosmicSurface) -> anyhow::Result<()>
+    fn render_window<R>(
+        renderer: &mut R,
+        window: &CosmicSurface,
+        offset: &time::UtcOffset,
+    ) -> anyhow::Result<()>
     where
-        R: Renderer + ImportAll + Offscreen<GlesRenderbuffer> + ExportMem + AsGlowRenderer,
-        R::TextureId: Send + Clone + 'static,
+        R: Renderer + ImportAll + Offscreen<GlesRenderbuffer> + ExportMem,
+        R::TextureId: Clone + 'static,
         R::Error: Send + Sync + 'static,
     {
         let bbox = bbox_from_surface_tree(&window.wl_surface().unwrap(), (0, 0));
-        let mut elements = Vec::new();
-        window.push_render_elements(
+        let elements = AsRenderElements::<R>::render_elements::<WaylandSurfaceRenderElement<R>>(
+            window,
             renderer,
             (-bbox.loc.x, -bbox.loc.y).into(),
             Scale::from(1.0),
             1.0,
-            None,
-            None,
-            false,
-            [0; 4],
-            0,
-            &mut |elem| elements.push(elem),
-            None,
         );
 
         // TODO: 10-bit
@@ -66,13 +65,17 @@ pub fn screenshot_window(state: &mut State, surface: &CosmicSurface) {
         let gl_data = renderer.map_texture(&mapping)?;
 
         if let Ok(Some(path)) = xdg_user::pictures() {
-            let local_timestamp = jiff::Zoned::now();
+            let local_timestamp = time::OffsetDateTime::now_utc().to_offset(*offset);
             let mut title = window.title();
             title.truncate(227); // 255 - time - png
             let name = sanitize_filename::sanitize(format!(
                 "{}_{}.png",
                 title,
-                local_timestamp.strftime("%Y-%m-%d_%H:%M:%S_%4f"),
+                local_timestamp
+                    .format(time::macros::format_description!(
+                        "[year]-[month]-[day]_[hour]:[minute]:[second]_[subsecond digits:4]"
+                    ))
+                    .unwrap(),
             ));
             let file = std::fs::File::create(path.join(name))?;
 
@@ -105,8 +108,12 @@ pub fn screenshot_window(state: &mut State, surface: &CosmicSurface) {
             })
             .with_context(|| "Failed to get renderer for screenshot")
             .and_then(|renderer| match renderer {
-                RendererRef::Glow(renderer) => render_window(renderer, surface),
-                RendererRef::GlMulti(mut renderer) => render_window(&mut renderer, surface),
+                RendererRef::Glow(renderer) => {
+                    render_window(renderer, surface, &state.common.local_offset)
+                }
+                RendererRef::GlMulti(mut renderer) => {
+                    render_window(&mut renderer, surface, &state.common.local_offset)
+                }
             });
         if let Err(err) = res {
             warn!(?err, "Failed to take screenshot")

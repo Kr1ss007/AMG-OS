@@ -174,8 +174,8 @@ impl State {
                     *current_config = backup;
                 }
             }
-            if !test_only
-                && let Err(err) = backend.apply_config_for_outputs(
+            if !test_only {
+                if let Err(err) = backend.apply_config_for_outputs(
                     false,
                     &self.common.event_loop_handle,
                     self.common.config.dynamic_conf.screen_filter(),
@@ -184,9 +184,9 @@ impl State {
                     &self.common.xdg_activation_state,
                     self.common.startup_done.clone(),
                     &self.common.clock,
-                )
-            {
-                error!("Failed to reset output config: {:?}", err);
+                ) {
+                    error!("Failed to reset output config: {:?}", err);
+                }
             }
             return false;
         }
@@ -229,16 +229,6 @@ impl State {
         self.common.event_loop_handle.insert_idle(move |state| {
             state.common.output_configuration_state.update();
         });
-
-        // Output scale or geometry may have changed. EI absolute-pointer regions
-        // are immutable per device, so any connected EI client (e.g. an RDP server)
-        // keeps mapping with the old scale until it reconnects. Recreate the
-        // device with the updated region so the mapping tracks the change live.
-        // (drop the backend lock first: refresh borrows `self` immutably.)
-        drop(backend);
-        if !test_only {
-            crate::libei::refresh_absolute_pointer_regions(self);
-        }
 
         true
     }

@@ -1,15 +1,12 @@
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 <html:template id="template-paneZenTabManagement">
 <hbox id="ZenWorkspacesCategory"
       class="subcategory"
       hidden="true"
       data-category="paneZenTabManagement">
+<html:h1 data-l10n-id="pane-workspaces-title"/>
 </hbox>
 
-<hbox id="zenTabManagementCategory"
+<hbox id="zenSidePanelsCategory"
       class="subcategory"
       hidden="true"
       data-category="paneZenTabManagement">
@@ -20,28 +17,45 @@
       <label><html:h2 data-l10n-id="zen-settings-workspaces-header"/></label>
       <description class="description-deemphasized" data-l10n-id="zen-settings-workspaces-description" />
 
-      <checkbox id="zenWorkspacesSyncUnpinnedTabs"
-            data-l10n-id="zen-settings-workspaces-sync-unpinned-tabs"
-            preference="zen.window-sync.sync-only-pinned-tabs"/>
       <checkbox id="zenWorkspacesHideDefaultContainer"
             data-l10n-id="zen-settings-workspaces-hide-default-container-indicator"
             preference="zen.workspaces.hide-default-container-indicator"/>
+      <checkbox id="zenWorkspacesDisplayAsIconStrip"
+            data-l10n-id="zen-settings-workspaces-display-as-icon-strip"
+            preference="zen.workspaces.show-icon-strip"/>
       <checkbox id="zenWorkspacesForceContainerTabsToWorkspace"
             data-l10n-id="zen-settings-workspaces-force-container-tabs-to-workspace"
             preference="zen.workspaces.force-container-workspace"/>
-      <checkbox id="zenTabsCloseOnBackWithNoHistory"
-            data-l10n-id="zen-tabs-close-on-back-with-no-history"
-            preference="zen.tabs.close-on-back-with-no-history"/>
-      <checkbox data-l10n-id="zen-tabs-cycle-ignore-pending-tabs"
-            preference="zen.tabs.ctrl-tab.ignore-pending-tabs"/>
-      <checkbox data-l10n-id="zen-tabs-cycle-by-attribute"
-            preference="zen.tabs.ctrl-tab.ignore-essential-tabs"/>
-      <description id="zenTabsCycleByAttributeWarning"
-            class="description-deemphasized"
-            data-l10n-id="zen-tabs-cycle-by-attribute-warning"
-            hidden="true"/>
-      <checkbox data-l10n-id="zen-tabs-select-recently-used-on-close"
-            preference="zen.tabs.select-recently-used-on-close"/>
+      <checkbox id="zenWorkspaceHideDeactivatedWorkspaces"
+            data-l10n-id="zen-settings-workspaces-hide-deactivated-workspaces"
+            preference="zen.workspaces.hide-deactivated-workspaces"/>
+</groupbox>
+
+<hbox id="zenTabsUnloadCategory"
+      class="subcategory"
+      hidden="true"
+      data-category="paneZenTabManagement">
+<html:h1 data-l10n-id="pane-zen-tabs-unloader-title"/>
+</hbox>
+
+<groupbox id="zenTabsUnloadGroup" data-category="paneZenTabManagement" hidden="true" class="highlighting-group">
+      <label><html:h2 data-l10n-id="zen-tabs-unloader-header"/></label>
+      <description class="description-deemphasized" data-l10n-id="zen-tabs-unloader-description" />
+
+      <checkbox id="zenTabsUnloadActivate"
+            data-l10n-id="zen-tabs-unloader-enabled"
+            preference="zen.tab-unloader.enabled"/>
+
+
+      <label><html:h2 data-l10n-id="zen-tabs-unloader-unload-delay"/></label>
+      <hbox id="zenTabsUnloadDelayContainer">
+            <description class="description-deemphasized" data-l10n-id="zen-tabs-unloader-unload-delay-description" />
+            <html:input id="zenTabsUnloadDelay"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  preference="zen.tab-unloader.timeout-minutes"/>
+      </hbox>
 </groupbox>
 
 <hbox id="zenPinnedTabsManagerCategory"
@@ -60,7 +74,7 @@
                 preference="zen.pinned-tab-manager.restore-pinned-tabs-to-pinned-url"/>
       <checkbox id="zenPinnedTabContainerSpecificEssentials"
                 data-l10n-id="zen-pinned-tab-manager-container-specific-essentials-enabled"
-                preference="zen.workspaces.separate-essentials"/>
+                preference="zen.workspaces.container-specific-essentials-enabled"/>
 
       <hbox align="center">
             <label id="zenPinnedTabCloseShortcutBehaviorLabel" data-l10n-id="zen-pinned-tab-manager-close-shortcut-behavior-label"/>

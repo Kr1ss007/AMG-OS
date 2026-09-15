@@ -1,0 +1,8 @@
+[Unit]
+Description=AMG-OS Operating System Target
+Documentation=file:///home/raven1zed/Documents/AMG-OS/docs/AMGOS_SPEC_v0.0.1.txt
+Requires=basic.target
+Wants=amgos-system.service
+After=basic.target rescue.service rescue.target
+Conflicts=rescue.service rescue.target
+AllowIsolate=yes

@@ -1,6 +1,6 @@
 use cosmic_settings_config::shortcuts;
 use smithay::{
-    backend::input::{InputTime, KeyState, Keycode},
+    backend::input::{KeyState, Keycode},
     input::{
         Seat, SeatHandler,
         keyboard::{
@@ -13,7 +13,6 @@ use smithay::{
 
 use crate::{
     config::key_bindings::cosmic_modifiers_from_smithay,
-    input::InputBackendId,
     shell::{Trigger, layout::tiling::NodeDesc},
     state::State,
 };
@@ -38,7 +37,7 @@ impl KeyboardGrab<State> for SwapWindowGrab {
         state: KeyState,
         modifiers: Option<ModifiersState>,
         serial: Serial,
-        time: InputTime,
+        time: u32,
     ) {
         if !matches!(&data.common.shell.read().overview_mode.active_trigger(), Some(Trigger::KeyboardSwap(_, d)) if d == &self.desc)
         {
@@ -74,7 +73,6 @@ impl KeyboardGrab<State> for SwapWindowGrab {
 
         data.handle_shortcut_action(
             shortcuts::Action::Focus(direction),
-            &InputBackendId::Normal,
             &self.seat,
             serial,
             time,

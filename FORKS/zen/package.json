@@ -1,61 +1,52 @@
 {
-  "name": "zen-desktop",
+  "name": "zen-core",
   "version": "1.0.0",
   "description": "",
   "lint-staged": {
     "**/*": ""
   },
-  "type": "module",
   "scripts": {
     "build": "surfer build",
     "build:ui": "surfer build --ui",
-    "start": "cd engine && python3 ./mach run --noprofile",
-    "start:bloat": "XPCOM_MEM_BLOAT_LOG=1 npm start",
-    "import": "npm run ffprefs && npm run import:dumps && surfer import",
-    "import:dumps": "python3 scripts/update_service_dumps.py",
+    "start": "cd engine && ./mach run --noprofile",
+    "import": "surfer import",
     "export": "surfer export",
-    "init": "npm run download && npm run import && npm run bootstrap",
+    "init": "npm run download && npm run bootstrap && npm run import",
     "download": "surfer download",
     "bootstrap": "surfer bootstrap",
     "package": "surfer package",
-    "sync": "python3 scripts/update_ff.py",
-    "sync:raw": "surfer update",
-    "sync:rc": "python3 scripts/update_ff.py --rc",
-    "sync:l10n": "python3 scripts/update_ff.py --just-l10n",
-    "lint": "cd engine && ./mach lint zen",
-    "lint:fix": "npm run lint -- --fix",
+    "update-ff": "python3 scripts/update_ff.py",
+    "update-ff:raw": "surfer update",
+    "update-newtab": "python3 scripts/update_newtab.py",
+    "update-ff:rc": "python3 scripts/update_ff.py --rc",
+    "update-ff:l10n": "python3 scripts/update_ff.py --just-l10n",
+    "pretty": "prettier . --write && autopep8 -r --in-place scripts/ src/",
+    "lint": "npx prettier . --check && autopep8 --diff scripts/ src/",
+    "prepare": "husky",
     "reset-ff": "surfer reset",
-    "surfer": "surfer",
-    "test": "python3 scripts/run_tests.py",
-    "test:dbg": "python3 scripts/run_tests.py --jsdebugger --debug-on-failure",
-    "test:gtest": "cd engine && ./mach gtest Zen*",
-    "ffprefs": "cd tools/ffprefs && cargo run --bin ffprefs -- ../../",
-    "lc": "surfer license-check",
-    "lc:fix": "surfer license-check --fix",
-    "use-moz-src": "cd engine && ./mach use-moz-src",
-    "ci": "surfer ci --brand release --display-version"
+    "surfer": "surfer"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zen-browser/desktop.git"
+    "url": "git+https://github.com/zen-browser/core.git"
+  },
+  "hooks": {
+    "pre-commit": "npm run prepare"
   },
   "keywords": [],
   "author": "",
-  "license": "MPL-2.0",
+  "license": "ISC",
   "bugs": {
-    "url": "https://github.com/zen-browser/desktop/issues"
+    "url": "https://github.com/zen-browser/core/issues"
   },
-  "homepage": "https://github.com/zen-browser/desktop#readme",
+  "homepage": "https://github.com/zen-browser/core#readme",
+  "dependencies": {
+    "@zen-browser/surfer": "^1.9.20"
+  },
   "devDependencies": {
-    "@babel/preset-typescript": "^7.27.0",
-    "@zen-browser/prettier": "^3.9.3",
-    "@zen-browser/surfer": "^1.14.9",
-    "formal-git": "^1.2.9",
-    "globals": "^16.3.0",
     "husky": "^9.1.7",
     "lint-staged": "^15.3.0",
-    "typescript": "^5.9.3"
-  },
-  "notes(private)": "We don't want to publish to npm, so this is marked as private",
-  "private": true
+    "prettier": "^3.4.2",
+    "prettier-plugin-sh": "^0.14.0"
+  }
 }

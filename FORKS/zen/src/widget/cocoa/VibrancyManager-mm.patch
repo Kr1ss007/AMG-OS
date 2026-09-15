@@ -1,22 +1,53 @@
 diff --git a/widget/cocoa/VibrancyManager.mm b/widget/cocoa/VibrancyManager.mm
-index bc62ff28285691c605fe0680e7a98927f11d5882..c209b63179df298e9b43182813ba0045f08328cc 100644
+index 849b62c9976a7bc5fee35e074e54c8f556ed9c38..a9742c7ff30d417a18f41f9c120259192f33a0fd 100644
 --- a/widget/cocoa/VibrancyManager.mm
 +++ b/widget/cocoa/VibrancyManager.mm
-@@ -9,6 +9,7 @@
- #import <objc/message.h>
+@@ -13,6 +13,7 @@
  
+ #include "nsChildView.h"
  #include "mozilla/StaticPrefs_widget.h"
 +#include "mozilla/StaticPrefs_zen.h"
- #include "nsCocoaWindow.h"
  
  using namespace mozilla;
-@@ -28,6 +29,9 @@ static NSVisualEffectState VisualEffectStateForVibrancyType(
+ 
+@@ -40,7 +41,23 @@ static NSVisualEffectMaterial VisualEffectMaterialForVibrancyType(
      case VibrancyType::Sidebar:
-       break;
+       return NSVisualEffectMaterialSidebar;
+     case VibrancyType::Titlebar:
+-      return NSVisualEffectMaterialTitlebar;
++      switch (StaticPrefs::zen_widget_macos_window_material()) {
++        case 1:
++          return NSVisualEffectMaterialHUDWindow;
++        case 2:
++          return NSVisualEffectMaterialFullScreenUI;
++        case 3:
++          return NSVisualEffectMaterialPopover;
++        case 4:
++          return NSVisualEffectMaterialMenu;
++        case 5:
++          return NSVisualEffectMaterialToolTip;
++        case 6:
++          return NSVisualEffectMaterialHeaderView;
++        case 7:
++        default:
++          return NSVisualEffectMaterialUnderWindowBackground;
++      }
    }
-+  if (!StaticPrefs::zen_view_grey_out_inactive_windows()) {
-+    return NSVisualEffectStateActive;
-+  }
-   return NSVisualEffectStateFollowsWindowActiveState;
  }
  
+@@ -78,6 +95,7 @@ - (NSView*)hitTest:(NSPoint)aPoint {
+ 
+ - (void)prefChanged {
+   self.blendingMode = VisualEffectBlendingModeForVibrancyType(mType);
++  self.material = VisualEffectMaterialForVibrancyType(mType);
+ }
+ @end
+ 
+@@ -88,6 +106,7 @@ static void PrefChanged(const char* aPref, void* aClosure) {
+ static constexpr nsLiteralCString kObservedPrefs[] = {
+     "widget.macos.sidebar-blend-mode.behind-window"_ns,
+     "widget.macos.titlebar-blend-mode.behind-window"_ns,
++    "zen.widget.macos.window-material"_ns,
+ };
+ 
+ VibrancyManager::VibrancyManager(const nsChildView& aCoordinateConverter,

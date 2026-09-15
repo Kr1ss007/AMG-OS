@@ -70,9 +70,10 @@ impl SelectionHandler for State {
             .xwayland_state
             .as_mut()
             .and_then(|xstate| xstate.xwm.as_mut())
-            && let Err(err) = xwm.send_selection(target, mime_type, fd)
         {
-            warn!(?err, "Failed to send selection (X11 -> Wayland).");
+            if let Err(err) = xwm.send_selection(target, mime_type, fd) {
+                warn!(?err, "Failed to send selection (X11 -> Wayland).");
+            }
         }
     }
 }

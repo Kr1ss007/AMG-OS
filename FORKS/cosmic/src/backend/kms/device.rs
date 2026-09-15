@@ -8,11 +8,12 @@ use crate::{
     config::{CompTransformDef, EdidProduct, ScreenFilter},
     shell::Shell,
     utils::{env::dev_list_var, prelude::*},
-    wayland::handlers::image_copy_capture::PendingImageCopyData,
+    wayland::handlers::screencopy::PendingImageCopyData,
 };
 
 use anyhow::{Context, Result};
 use cosmic_comp_config::output::comp::{AdaptiveSync, OutputConfig, OutputState};
+use libc::dev_t;
 use smithay::{
     backend::{
         allocator::{
@@ -28,7 +29,7 @@ use smithay::{
         },
         egl::{EGLContext, EGLDevice, EGLDisplay, context::ContextPriority},
         renderer::glow::GlowRenderer,
-        session::{Session, libseat::LibSeatSession},
+        session::Session,
     },
     desktop::utils::OutputPresentationFeedback,
     output::{Mode as OutputMode, Output, PhysicalProperties, Scale, Subpixel},
@@ -36,17 +37,13 @@ use smithay::{
         calloop::{LoopHandle, RegistrationToken},
         drm::control::{Device as ControlDevice, ModeTypeFlags, connector, crtc},
         gbm::BufferObjectFlags as GbmBufferFlags,
-        rustix::fs::{Dev as dev_t, OFlags},
-        wayland_server::DisplayHandle,
+        rustix::fs::OFlags,
+        wayland_server::{DisplayHandle, Weak, protocol::wl_buffer::WlBuffer},
     },
     utils::{Clock, DevPath, DeviceFd, Monotonic, Point, Transform},
-    wayland::{
-        drm_lease::{DrmLease, DrmLeaseState},
-        drm_syncobj::supports_syncobj_eventfd,
-    },
+    wayland::drm_lease::{DrmLease, DrmLeaseState},
 };
 use tracing::{error, info, warn};
-use wayland_backend::server::ClientId;
 
 use std::{
     borrow::BorrowMut,
@@ -59,7 +56,7 @@ use std::{
     time::Duration,
 };
 
-use super::{drm_helpers, surface::Surface};
+use super::{drm_helpers, socket::Socket, surface::Surface};
 
 #[derive(Debug)]
 pub struct EGLInternals {
@@ -96,21 +93,9 @@ pub struct Device {
     pub inner: InnerDevice,
     pub drm: GbmDrmOutputManager,
 
-    pub texture_formats: FormatSet,
+    supports_atomic: bool,
     event_token: Option<RegistrationToken>,
-}
-
-#[derive(Debug)]
-struct ReusableDevice {
-    leasing_global: Option<DrmLeaseState>,
-    active_clients: HashSet<ClientId>,
-}
-
-#[derive(Debug)]
-struct OldDeviceState {
-    fd: DeviceFd,
-    outputs: HashMap<connector::Handle, Output>,
-    leased_connectors: HashSet<connector::Handle>,
+    pub socket: Option<Socket>,
 }
 
 #[derive(Debug)]
@@ -132,7 +117,7 @@ pub struct InnerDevice {
     pub leased_connectors: Vec<(connector::Handle, crtc::Handle)>,
     pub leasing_global: Option<DrmLeaseState>,
     pub active_leases: Vec<DrmLease>,
-    pub active_clients: HashSet<ClientId>,
+    pub active_buffers: HashSet<Weak<WlBuffer>>,
 }
 
 impl fmt::Debug for InnerDevice {
@@ -148,7 +133,7 @@ impl fmt::Debug for InnerDevice {
             .field("leased_connectors", &self.leased_connectors)
             .field("leasing_global", &self.leasing_global)
             .field("active_leases", &self.active_leases)
-            .field("active_clients", &self.active_clients.len())
+            .field("active_buffers", &self.active_buffers.len())
             .finish()
     }
 }
@@ -218,32 +203,149 @@ impl State {
                 }
             }
         }
-        if let Some(blocklist) = dev_list_var("COSMIC_DRM_BLOCK_DEVICES")
-            && let Ok(node) = DrmNode::from_dev_id(dev)
-        {
-            let node = node
-                .node_with_type(NodeType::Render)
-                .and_then(|res| res.ok())
-                .unwrap_or(node);
-            for ident in blocklist {
-                if ident.matches(&node) {
-                    info!(
-                        "Skipping device {} due to COSMIC_DRM_BLOCK_DEVICE list.",
-                        path.display()
-                    );
-                    return Ok(Vec::new());
+        if let Some(blocklist) = dev_list_var("COSMIC_DRM_BLOCK_DEVICES") {
+            if let Ok(node) = DrmNode::from_dev_id(dev) {
+                let node = node
+                    .node_with_type(NodeType::Render)
+                    .and_then(|res| res.ok())
+                    .unwrap_or(node);
+                for ident in blocklist {
+                    if ident.matches(&node) {
+                        info!(
+                            "Skipping device {} due to COSMIC_DRM_BLOCK_DEVICE list.",
+                            path.display()
+                        );
+                        return Ok(Vec::new());
+                    }
                 }
             }
         }
 
-        let mut device = Device::new(
-            dev,
-            path,
-            &mut self.backend.kms().session,
-            &mut self.common,
-            dh,
-            None,
-        )?;
+        let fd = DrmDeviceFd::new(DeviceFd::from(
+            self.backend
+                .kms()
+                .session
+                .open(
+                    path,
+                    OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+                )
+                .with_context(|| {
+                    format!(
+                        "Failed to optain file descriptor for drm device: {}",
+                        path.display()
+                    )
+                })?,
+        ));
+        let (drm, notifier) = DrmDevice::new(fd.clone(), false)
+            .with_context(|| format!("Failed to initialize drm device for: {}", path.display()))?;
+        let drm_node = DrmNode::from_dev_id(dev)?;
+        let supports_atomic = drm.is_atomic();
+
+        let gbm = GbmDevice::new(fd)
+            .with_context(|| format!("Failed to initialize GBM device for {}", path.display()))?;
+        let (render_node, render_formats, is_software) = {
+            let egl = init_egl(&gbm)?;
+
+            let render_node = egl
+                .device
+                .try_get_render_node()
+                .ok()
+                .and_then(std::convert::identity)
+                .unwrap_or(drm_node);
+            let render_formats = egl.context.dmabuf_render_formats().clone();
+
+            (render_node, render_formats, egl.device.is_software())
+        };
+
+        let token = self
+            .common
+            .event_loop_handle
+            .insert_source(
+                notifier,
+                move |event, metadata, state: &mut State| match event {
+                    DrmEvent::VBlank(crtc) => {
+                        if let Some(device) = state.backend.kms().drm_devices.get_mut(&drm_node) {
+                            if let Some(surface) = device.inner.surfaces.get_mut(&crtc) {
+                                surface.on_vblank(metadata.take());
+                            }
+                        }
+                    }
+                    DrmEvent::Error(err) => {
+                        warn!(?err, "Failed to read events of device {:?}.", dev);
+                    }
+                },
+            )
+            .with_context(|| format!("Failed to add drm device to event loop: {}", dev))?;
+
+        let socket = match (!is_software)
+            .then(|| self.create_socket(dh, render_node, render_formats.clone()))
+            .transpose()
+        {
+            Ok(socket) => socket,
+            Err(err) => {
+                warn!(
+                    ?err,
+                    "Failed to initialize hardware-acceleration for clients on {}.", render_node,
+                );
+                None
+            }
+        };
+
+        let leasing_global = match (!is_software)
+            .then(|| DrmLeaseState::new::<State>(dh, &drm_node))
+            .transpose()
+        {
+            Ok(global) => global,
+            Err(err) => {
+                // TODO: replace with inspect_err, once stable
+                warn!(
+                    ?err,
+                    "Failed to initialize drm lease global for: {}", drm_node
+                );
+                None
+            }
+        };
+
+        let drm = GbmDrmOutputManager::new(
+            drm,
+            GbmAllocator::new(
+                gbm.clone(),
+                GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+            ),
+            GbmFramebufferExporter::new(gbm.clone(), render_node.into()),
+            Some(gbm.clone()),
+            [
+                Fourcc::Abgr2101010,
+                Fourcc::Argb2101010,
+                Fourcc::Abgr8888,
+                Fourcc::Argb8888,
+            ],
+            render_formats,
+        );
+
+        let mut device = Device {
+            drm,
+            inner: InnerDevice {
+                dev_node: drm_node,
+                render_node,
+                is_software,
+                egl: None,
+
+                outputs: HashMap::new(),
+                surfaces: HashMap::new(),
+                gbm,
+
+                leased_connectors: Vec::new(),
+                leasing_global,
+                active_leases: Vec::new(),
+                active_buffers: HashSet::new(),
+            },
+
+            supports_atomic,
+            event_token: Some(token),
+            socket,
+        };
+
         let connectors = device.enumerate_surfaces()?.added; // There are no removed outputs on newly added devices
         let mut wl_outputs = Vec::new();
         let mut w = self.common.shell.read().global_space().size.w as u32;
@@ -277,7 +379,7 @@ impl State {
             // TODO atomic commit all surfaces together and drop surfaces, if it fails due to bandwidth
 
             let kms = self.backend.kms();
-            kms.drm_devices.insert(device.inner.dev_node, device);
+            kms.drm_devices.insert(drm_node, device);
         }
 
         self.common
@@ -379,219 +481,7 @@ impl State {
         Ok(outputs_added)
     }
 
-    pub fn reopen_device(
-        &mut self,
-        dev: dev_t,
-        path: &Path,
-        dh: &DisplayHandle,
-    ) -> Result<Vec<Output>> {
-        let backend = self.backend.kms();
-        let drm_node = backend
-            .drm_devices
-            .values()
-            .find_map(|device| {
-                (device.inner.dev_node.dev_id() == dev).then_some(device.inner.dev_node)
-            })
-            .with_context(|| format!("Couldn't find drm node for {}", dev))?;
-
-        if let Some(mut device) = backend.drm_devices.shift_remove(&drm_node) {
-            let is_primary = backend
-                .primary_node
-                .read()
-                .unwrap()
-                .is_some_and(|node| node == device.inner.render_node);
-
-            // all drm resources become inert
-            if let Some(token) = device.event_token.take() {
-                self.common.event_loop_handle.remove(token);
-            }
-            for (_, surface) in device.inner.surfaces.drain() {
-                surface.drop_and_join();
-            }
-            if let Some(leasing_global) = device.inner.leasing_global.as_mut() {
-                for (connector, _) in &device.inner.leased_connectors {
-                    leasing_global.withdraw_connector(*connector);
-                }
-                device.inner.active_leases.clear();
-            }
-
-            // These contain a reference to the file descriptor
-            backend.api.as_mut().remove_node(&device.inner.render_node);
-            // trigger enumeration
-            let _ = backend.api.devices();
-
-            for surface in backend
-                .drm_devices
-                .values_mut()
-                .flat_map(|device| device.inner.surfaces.values_mut())
-            {
-                surface.remove_node(device.inner.render_node);
-            }
-            let syncobj_guard =
-                if is_primary && let Some(syncobj_state) = backend.syncobj_state.as_mut() {
-                    Some(syncobj_state.close_device())
-                } else {
-                    None
-                };
-
-            let (reusable, mut old_state) = device.reuse();
-
-            match TryInto::<OwnedFd>::try_into(old_state.fd) {
-                Ok(fd) => {
-                    if let Err(err) = backend.session.close(fd) {
-                        warn!("Failed to close drm device fd: {}", err);
-                    }
-                }
-                Err(_) => {
-                    warn!(?drm_node, "Unable to close drm device fd cleanly.");
-                }
-            };
-
-            let mut new_device = Device::new(
-                dev,
-                path,
-                &mut backend.session,
-                &mut self.common,
-                dh,
-                Some(reusable),
-            )?;
-
-            if let Some(guard) = syncobj_guard {
-                let import_device = new_device.drm.device().device_fd().clone();
-                if supports_syncobj_eventfd(&import_device) {
-                    guard.update_device(import_device);
-                } else {
-                    drop(guard);
-                    dh.remove_global::<State>(backend.syncobj_state.take().unwrap().into_global());
-                }
-            }
-
-            let connectors = new_device.enumerate_surfaces()?.added;
-            let mut outputs_added = Vec::new();
-            let mut w = self.common.shell.read().global_space().size.w as u32;
-
-            {
-                for (conn, maybe_crtc) in connectors {
-                    if let Some(output) = old_state.outputs.remove(&conn) {
-                        let has_surface = if old_state.leased_connectors.contains(&conn) {
-                            if let Some(crtc) = maybe_crtc {
-                                new_device.inner.leased_connectors.push((conn, crtc));
-                                info!(
-                                    "Connector {} is non-desktop, setting up for leasing",
-                                    output.name()
-                                );
-                                if let Some(lease_state) = new_device.inner.leasing_global.as_mut()
-                                {
-                                    let physical = output.physical_properties();
-                                    lease_state.add_connector::<State>(
-                                        conn,
-                                        output.name(),
-                                        format!("{} {}", physical.make, physical.model),
-                                    );
-                                }
-                            } else {
-                                warn!(
-                                    "Connector {} is non-desktop, but we don't have a free crtc: not leasing",
-                                    output.name()
-                                );
-                            }
-                            false
-                        } else {
-                            let loc = output.current_location();
-                            populate_modes(
-                                new_device.drm.device_mut(),
-                                &output,
-                                conn,
-                                true,
-                                (loc.x as u32, loc.y as u32),
-                            )
-                            .with_context(|| "Failed to enumerate connector modes")?;
-
-                            if let Some(crtc) = maybe_crtc {
-                                match Surface::new(
-                                    &output,
-                                    crtc,
-                                    conn,
-                                    backend.primary_node.clone(),
-                                    new_device.inner.dev_node,
-                                    new_device.inner.render_node,
-                                    &self.common.event_loop_handle,
-                                    self.common.config.dynamic_conf.screen_filter().clone(),
-                                    self.common.shell.clone(),
-                                    self.common.startup_done.clone(),
-                                ) {
-                                    Ok(data) => {
-                                        new_device.inner.surfaces.insert(crtc, data);
-                                        true
-                                    }
-                                    Err(err) => {
-                                        error!(?crtc, "Failed to initialize surface: {}", err);
-                                        false
-                                    }
-                                }
-                            } else {
-                                false
-                            }
-                        };
-
-                        if !has_surface {
-                            output
-                                .user_data()
-                                .get::<RefCell<OutputConfig>>()
-                                .unwrap()
-                                .borrow_mut()
-                                .enabled = OutputState::Disabled;
-                        }
-                        new_device.inner.outputs.insert(conn, output);
-                    } else {
-                        match new_device.inner.connector_added(
-                            new_device.drm.device_mut(),
-                            backend.primary_node.clone(),
-                            conn,
-                            maybe_crtc,
-                            (w, 0),
-                            &self.common.event_loop_handle,
-                            self.common.config.dynamic_conf.screen_filter().clone(),
-                            self.common.shell.clone(),
-                            self.common.startup_done.clone(),
-                        ) {
-                            Ok((output, should_expose)) => {
-                                if should_expose {
-                                    w += output.geometry().size.w as u32;
-                                    outputs_added.push(output.clone());
-                                }
-
-                                new_device.inner.outputs.insert(conn, output);
-                            }
-                            Err(err) => {
-                                warn!(?err, "Failed to initialize output, skipping");
-                            }
-                        }
-                    }
-                }
-            }
-
-            self.common
-                .output_configuration_state
-                .remove_heads(old_state.outputs.values());
-            self.common
-                .output_configuration_state
-                .add_heads(outputs_added.iter());
-
-            for output in old_state.outputs.values() {
-                self.common.remove_output(output);
-            }
-
-            backend.drm_devices.insert(drm_node, new_device);
-            backend.refresh_used_devices()?;
-
-            Ok(outputs_added)
-        } else {
-            Ok(Vec::new())
-        }
-    }
-
-    pub fn device_removed(&mut self, dev: dev_t, _dh: &DisplayHandle) -> Result<()> {
+    pub fn device_removed(&mut self, dev: dev_t, dh: &DisplayHandle) -> Result<()> {
         let backend = self.backend.kms();
         // we can't use DrmNode::from_node_id, because that assumes the node is still on sysfs
         let drm_node = backend
@@ -613,6 +503,13 @@ impl State {
             }
             if let Some(token) = device.event_token.take() {
                 self.common.event_loop_handle.remove(token);
+            }
+            if let Some(socket) = device.socket.take() {
+                self.common.event_loop_handle.remove(socket.token);
+                self.common
+                    .dmabuf_state
+                    .destroy_global::<State>(dh, socket.dmabuf_global);
+                dh.remove_global::<State>(socket.drm_global);
             }
             backend.api.as_mut().remove_node(&device.inner.render_node);
             backend
@@ -676,141 +573,10 @@ pub struct OutputChanges {
 }
 
 impl Device {
-    fn new(
-        dev: dev_t,
-        path: impl AsRef<Path>,
-        session: &mut LibSeatSession,
-        common: &mut Common,
-        dh: &DisplayHandle,
-        reuse: Option<ReusableDevice>,
-    ) -> Result<Self> {
-        let path = path.as_ref();
-        let fd = DrmDeviceFd::new(DeviceFd::from(
-            session
-                .open(
-                    path,
-                    OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
-                )
-                .with_context(|| {
-                    format!(
-                        "Failed to obtain file descriptor for drm device: {}",
-                        path.display()
-                    )
-                })?,
-        ));
-        let (drm, notifier) = DrmDevice::new(fd.clone(), false)
-            .with_context(|| format!("Failed to initialize drm device for: {}", path.display()))?;
-        let dev_node = DrmNode::from_dev_id(dev)?;
-
-        let gbm = GbmDevice::new(fd)
-            .with_context(|| format!("Failed to initialize GBM device for {}", path.display()))?;
-        let (render_node, render_formats, texture_formats, is_software) = {
-            let egl = init_egl(&gbm)?;
-
-            let render_node = egl
-                .device
-                .try_get_render_node()
-                .ok()
-                .and_then(std::convert::identity)
-                .unwrap_or(dev_node);
-            let render_formats = egl.context.dmabuf_render_formats().clone();
-            let texture_formats = egl.context.dmabuf_texture_formats().clone();
-
-            (
-                render_node,
-                render_formats,
-                texture_formats,
-                egl.device.is_software(),
-            )
-        };
-
-        let token = common
-            .event_loop_handle
-            .insert_source(
-                notifier,
-                move |event, metadata, state: &mut State| match event {
-                    DrmEvent::VBlank(crtc) => {
-                        if let Some(device) = state.backend.kms().drm_devices.get_mut(&dev_node)
-                            && let Some(surface) = device.inner.surfaces.get_mut(&crtc)
-                        {
-                            surface.on_vblank(metadata.take());
-                        }
-                    }
-                    DrmEvent::Error(err) => {
-                        warn!(?err, "Failed to read events of device {:?}.", dev);
-                    }
-                },
-            )
-            .with_context(|| format!("Failed to add drm device to event loop: {}", dev))?;
-
-        let ReusableDevice {
-            leasing_global,
-            active_clients,
-        } = reuse.unwrap_or_else(|| {
-            let leasing_global = match (!is_software)
-                .then(|| DrmLeaseState::new::<State>(dh, &dev_node))
-                .transpose()
-            {
-                Ok(global) => global,
-                Err(err) => {
-                    // TODO: replace with inspect_err, once stable
-                    warn!(
-                        ?err,
-                        "Failed to initialize drm lease global for: {}", dev_node
-                    );
-                    None
-                }
-            };
-
-            ReusableDevice {
-                leasing_global,
-                active_clients: HashSet::new(),
-            }
-        });
-
-        let drm = GbmDrmOutputManager::new(
-            drm,
-            GbmAllocator::new(
-                gbm.clone(),
-                GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
-            ),
-            GbmFramebufferExporter::new(gbm.clone(), render_node.into()),
-            Some(gbm.clone()),
-            [
-                Fourcc::Abgr2101010,
-                Fourcc::Argb2101010,
-                Fourcc::Abgr8888,
-                Fourcc::Argb8888,
-            ],
-            render_formats,
-        );
-
-        Ok(Device {
-            drm,
-            inner: InnerDevice {
-                dev_node,
-                render_node,
-                is_software,
-                egl: None,
-
-                outputs: HashMap::new(),
-                surfaces: HashMap::new(),
-                gbm,
-
-                leased_connectors: Vec::new(),
-                leasing_global,
-                active_leases: Vec::new(),
-                active_clients,
-            },
-
-            texture_formats,
-            event_token: Some(token),
-        })
-    }
-
     pub fn enumerate_surfaces(&mut self) -> Result<OutputChanges> {
         // enumerate our outputs
-        let config = drm_helpers::display_configuration(self.drm.device_mut())?;
+        let config =
+            drm_helpers::display_configuration(self.drm.device_mut(), self.supports_atomic)?;
 
         let surfaces = self
             .inner
@@ -860,26 +626,6 @@ impl Device {
             drm: self.drm.lock(),
         }
     }
-
-    fn reuse(self) -> (ReusableDevice, OldDeviceState) {
-        let device = ReusableDevice {
-            leasing_global: self.inner.leasing_global,
-            active_clients: self.inner.active_clients,
-        };
-
-        let state = OldDeviceState {
-            fd: self.drm.device().device_fd().device_fd(),
-            outputs: self.inner.outputs,
-            leased_connectors: self
-                .inner
-                .leased_connectors
-                .iter()
-                .map(|(conn, _)| *conn)
-                .collect(),
-        };
-
-        (device, state)
-    }
 }
 
 impl LockedDevice<'_> {
@@ -915,7 +661,6 @@ impl LockedDevice<'_> {
                         output,
                         CursorMode::All,
                         None,
-                        None,
                     )
                     .with_context(|| "Failed to render outputs")?,
                     None => Vec::new(),
@@ -923,10 +668,10 @@ impl LockedDevice<'_> {
 
                 let mut compositor = compositor.lock().unwrap();
                 compositor.render_frame(renderer, &elements, CLEAR_COLOR, FrameFlags::empty())?;
-                if let Err(err) = compositor.commit_frame()
-                    && !matches!(err, FrameError::EmptyFrame)
-                {
-                    return Err(err.into());
+                if let Err(err) = compositor.commit_frame() {
+                    if !matches!(err, FrameError::EmptyFrame) {
+                        return Err(err.into());
+                    }
                 }
             }
         }
@@ -993,7 +738,7 @@ impl InnerDevice {
     pub fn in_use(&self, primary: Option<&DrmNode>) -> bool {
         Some(&self.render_node) == primary
             || !self.surfaces.is_empty()
-            || !self.active_clients.is_empty()
+            || !self.active_buffers.is_empty()
     }
 
     pub fn connector_added(

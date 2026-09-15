@@ -1,30 +1,20 @@
 diff --git a/browser/components/BrowserGlue.sys.mjs b/browser/components/BrowserGlue.sys.mjs
-index d07aaa3fbb8ccb02ae00d845649dc9c1d623cba5..68d3a4800f14fef5b5e7df9cd9afe3bc85358bed 100644
+index b888a753a7f23a9800fe04da51a4e6b898314ff2..a6a01cf035253b05ea7b20b434cf2002ff115d96 100644
 --- a/browser/components/BrowserGlue.sys.mjs
 +++ b/browser/components/BrowserGlue.sys.mjs
-@@ -8,6 +8,7 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
- const lazy = {};
+@@ -121,6 +121,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
+   WindowsGPOParser: "resource://gre/modules/policies/WindowsGPOParser.sys.mjs",
+   clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+   setTimeout: "resource://gre/modules/Timer.sys.mjs",
++  gZenUIMigration: "chrome://browser/content/zen-components/ZenUIMigration.mjs",
+ });
  
- ChromeUtils.defineESModuleGetters(lazy, {
-+  gZenUIMigration: "resource:///modules/ZenUIMigration.sys.mjs",
-   AboutHomeStartupCache: "resource:///modules/AboutHomeStartupCache.sys.mjs",
-   AWToolbarButton: "resource:///modules/aboutwelcome/AWToolbarUtils.sys.mjs",
-   ASRouter: "resource:///modules/asrouter/ASRouter.sys.mjs",
-@@ -1458,7 +1459,7 @@ BrowserGlue.prototype = {
-       windowcount++;
-       let tabbrowser = win.gBrowser;
-       if (tabbrowser) {
--        pagecount += tabbrowser.visibleTabs.length - tabbrowser.pinnedTabCount;
-+        pagecount += tabbrowser.visibleTabs.filter(t => t.getAttribute("pending")!=="true").length;
-       }
-     }
+ if (AppConstants.MOZ_UPDATER) {
+@@ -1951,6 +1952,7 @@ BrowserGlue.prototype = {
  
-@@ -1623,6 +1624,8 @@ BrowserGlue.prototype = {
-     } else if (profileDataVersion < APP_DATA_VERSION) {
-       lazy.ProfileDataUpgrader.upgrade(profileDataVersion, APP_DATA_VERSION);
-     }
-+
-+    lazy.gZenUIMigration.init(this._isNewProfile);
-   },
+     lazy.UrlbarPrefs.updateFirefoxSuggestScenario();
  
-   async _showUpgradeDialog() {
++    lazy.gZenUIMigration.init(this._isNewProfile, aWindow);
+     // A channel for "remote troubleshooting" code...
+     let channel = new lazy.WebChannel(
+       "remote-troubleshooting",

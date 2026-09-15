@@ -6,50 +6,38 @@ use std::{
 
 use crate::{
     shell::{
-        CosmicSurface, CursorGeometry, SeatExt,
+        CosmicSurface, SeatExt,
         element::{CosmicMapped, CosmicStack, CosmicWindow},
         layout::tiling::ResizeForkTarget,
         zoom::ZoomFocusTarget,
     },
     utils::prelude::*,
-    wayland::handlers::{image_copy_capture::SessionHolder, xdg_shell::popup::get_popup_toplevel},
+    wayland::handlers::{screencopy::SessionHolder, xdg_shell::popup::get_popup_toplevel},
 };
 use id_tree::NodeId;
 use smithay::{
-    backend::input::{InputTime, KeyState, TabletToolDescriptor},
+    backend::input::KeyState,
     desktop::{LayerSurface, PopupKind, WindowSurface, WindowSurfaceType, space::SpaceElement},
     input::{
         Seat,
         dnd::{DndFocus, OfferData, Source},
         keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
         pointer::{
-            AxisFrame as PointerAxisFrame, ButtonEvent as PointerButtonEvent,
-            GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-            GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
-            GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent as PointerMotionEvent,
-            PointerTarget, RelativeMotionEvent,
-        },
-        tablet::{
-            Tablet,
-            tool::{
-                AxisFrame as ToolAxisFrame, ButtonEvent as ToolButtonEvent,
-                DownEvent as ToolDownEvent, MotionEvent as ToolMotionEvent, TabletToolHandle,
-                TabletToolTarget, UpEvent as ToolUpEvent,
-            },
+            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
+            GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
+            MotionEvent as PointerMotionEvent, PointerTarget, RelativeMotionEvent,
         },
         touch::{
-            DownEvent as TouchDownEvent, FrameMarker, MotionEvent as TouchMotionEvent,
-            OrientationEvent, ShapeEvent, TouchTarget, UpEvent as TouchUpEvent,
+            DownEvent, MotionEvent as TouchMotionEvent, OrientationEvent, ShapeEvent, TouchTarget,
+            UpEvent,
         },
     },
     reexports::wayland_server::{
         Client, DisplayHandle, Resource, backend::ObjectId, protocol::wl_surface::WlSurface,
     },
     utils::{IsAlive, Logical, Point, Serial, Transform},
-    wayland::{
-        compositor::with_states, seat::WaylandFocus, selection::data_device::WlOfferData,
-        session_lock::LockSurface, shell::xdg::SurfaceCachedState,
-    },
+    wayland::{seat::WaylandFocus, selection::data_device::WlOfferData, session_lock::LockSurface},
     xwayland::{
         X11Surface,
         xwm::{XwmId, XwmOfferData},
@@ -73,7 +61,6 @@ pub enum PointerFocusTarget {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum PointerFocusToplevel {
     Surface(CosmicSurface),
     Popup(PopupKind),
@@ -173,17 +160,6 @@ impl PointerFocusTarget {
         }
     }
 
-    fn inner_tablet_tool_target(&self) -> &dyn TabletToolTarget<State> {
-        match self {
-            PointerFocusTarget::WlSurface { surface, .. } => surface,
-            PointerFocusTarget::X11Surface { surface, .. } => surface,
-            PointerFocusTarget::StackUI(u) => u,
-            PointerFocusTarget::WindowUI(u) => u,
-            PointerFocusTarget::ResizeFork(f) => f,
-            PointerFocusTarget::ZoomUI(e) => e,
-        }
-    }
-
     pub fn under_surface<P: Into<Point<f64, Logical>>>(
         surface: &CosmicSurface,
         point: P,
@@ -220,7 +196,7 @@ impl PointerFocusTarget {
             PointerFocusTarget::WlSurface {
                 toplevel: Some(PointerFocusToplevel::Popup(PopupKind::Xdg(popup))),
                 ..
-            } => get_popup_toplevel(&PopupKind::Xdg(popup.clone()))
+            } => get_popup_toplevel(popup)
                 .and_then(|s| shell.element_for_surface(&s).map(|mapped| (mapped, s)))
                 .and_then(|(m, s)| {
                     m.windows()
@@ -248,74 +224,6 @@ impl PointerFocusTarget {
             _ => false,
         }
     }
-
-    // Update image copy cursor position/hotspot for enter/motion event
-    fn update_image_copy_cursor_position(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        event: &PointerMotionEvent,
-    ) {
-        let Some(toplevel) = self.toplevel(&data.common.shell.read()) else {
-            return;
-        };
-        let cursor_sessions = toplevel.cursor_sessions();
-        if cursor_sessions.is_empty() {
-            return;
-        }
-
-        let cursor_pos = if let Some(wl_surface) = self.wl_surface() {
-            let surface_offset = toplevel
-                .surface_offset(&wl_surface)
-                .unwrap_or(Point::from((0, 0)))
-                .to_f64();
-            let geometry_loc = toplevel
-                .wl_surface()
-                .and_then(|s| {
-                    with_states(&s, |states| {
-                        states
-                            .cached_state
-                            .get::<SurfaceCachedState>()
-                            .current()
-                            .geometry
-                            .map(|g| g.loc.to_f64())
-                    })
-                })
-                .unwrap_or_default();
-            Some(
-                (event.location - geometry_loc + surface_offset)
-                    .to_buffer(1.0, Transform::Normal, &toplevel.geometry().size.to_f64())
-                    .to_i32_round(),
-            )
-        } else {
-            // If cursor is in SSD, instead of a `wl_surface`, it is outside the captured bounds
-            None
-        };
-
-        let cursor_hotspot = if let Some(CursorGeometry { hotspot, .. }) = seat.cursor_geometry(
-            (0.0, 0.0),
-            Duration::from_millis(event.time.millis() as u64).into(),
-        ) {
-            hotspot
-        } else {
-            Point::from((0, 0))
-        };
-
-        for session in cursor_sessions {
-            session.set_cursor_pos(cursor_pos);
-            session.set_cursor_hotspot(cursor_hotspot);
-        }
-    }
-
-    pub fn supports_tool(&self, tool_handle: &TabletToolHandle<State>) -> bool {
-        match self {
-            Self::WlSurface { surface, .. } if surface.client().is_some() => tool_handle
-                .client_tools(&surface.client().unwrap())
-                .next()
-                .is_some(),
-            _ => true,
-        }
-    }
 }
 
 impl KeyboardFocusTarget {
@@ -334,7 +242,7 @@ impl KeyboardFocusTarget {
         match self {
             KeyboardFocusTarget::Element(mapped) => mapped.wl_surface(),
             KeyboardFocusTarget::Popup(PopupKind::Xdg(xdg)) => {
-                get_popup_toplevel(&PopupKind::Xdg(xdg.clone())).map(Cow::Owned)
+                get_popup_toplevel(xdg).map(Cow::Owned)
             }
             _ => None,
         }
@@ -357,7 +265,7 @@ impl KeyboardFocusTarget {
         }
     }
 
-    pub fn x11_surface(&self) -> Option<X11Surface> {
+    fn x11_surface(&self) -> Option<X11Surface> {
         match self {
             KeyboardFocusTarget::Element(mapped) => mapped.active_window().x11_surface().cloned(),
             KeyboardFocusTarget::Fullscreen(surface) => surface.x11_surface().cloned(),
@@ -368,18 +276,6 @@ impl KeyboardFocusTarget {
     pub fn is_xwm(&self, xwm: XwmId) -> bool {
         if let Some(surface) = self.x11_surface() {
             surface.xwm_id().unwrap() == xwm
-        } else {
-            false
-        }
-    }
-
-    pub fn has_surface(&self, shell: &Shell, surface: &WlSurface) -> bool {
-        if let Some(fe) = shell.focused_element(self) {
-            fe.has_surface(surface, WindowSurfaceType::ALL)
-        } else if let KeyboardFocusTarget::Fullscreen(s) = self {
-            s.has_surface(surface, WindowSurfaceType::ALL)
-        } else if let Some(root) = WaylandFocus::wl_surface(self) {
-            CosmicSurface::surface_tree_offset(&root, surface).is_some()
         } else {
             false
         }
@@ -428,27 +324,63 @@ impl IsAlive for KeyboardFocusTarget {
 
 impl PointerTarget<State> for PointerFocusTarget {
     fn enter(&self, seat: &Seat<State>, data: &mut State, event: &PointerMotionEvent) {
-        self.update_image_copy_cursor_position(seat, data, event);
+        let toplevel = self.toplevel(&data.common.shell.read());
+        if let Some(element) = toplevel {
+            for session in element.cursor_sessions() {
+                session.set_cursor_pos(Some(
+                    event
+                        .location
+                        .to_buffer(1.0, Transform::Normal, &element.geometry().size.to_f64())
+                        .to_i32_round(),
+                ));
+                if let Some((_, hotspot)) = seat
+                    .cursor_geometry((0.0, 0.0), Duration::from_millis(event.time as u64).into())
+                {
+                    session.set_cursor_hotspot(hotspot);
+                } else {
+                    session.set_cursor_hotspot((0, 0));
+                }
+            }
+        }
+
         self.inner_pointer_target().enter(seat, data, event);
     }
     fn motion(&self, seat: &Seat<State>, data: &mut State, event: &PointerMotionEvent) {
-        self.update_image_copy_cursor_position(seat, data, event);
+        let toplevel = self.toplevel(&data.common.shell.read());
+        if let Some(element) = toplevel {
+            for session in element.cursor_sessions() {
+                session.set_cursor_pos(Some(
+                    event
+                        .location
+                        .to_buffer(1.0, Transform::Normal, &element.geometry().size.to_f64())
+                        .to_i32_round(),
+                ));
+                if let Some((_, hotspot)) = seat
+                    .cursor_geometry((0.0, 0.0), Duration::from_millis(event.time as u64).into())
+                {
+                    session.set_cursor_hotspot(hotspot);
+                } else {
+                    session.set_cursor_hotspot((0, 0));
+                }
+            }
+        }
+
         self.inner_pointer_target().motion(seat, data, event);
     }
     fn relative_motion(&self, seat: &Seat<State>, data: &mut State, event: &RelativeMotionEvent) {
         self.inner_pointer_target()
             .relative_motion(seat, data, event);
     }
-    fn button(&self, seat: &Seat<State>, data: &mut State, event: &PointerButtonEvent) {
+    fn button(&self, seat: &Seat<State>, data: &mut State, event: &ButtonEvent) {
         self.inner_pointer_target().button(seat, data, event);
     }
-    fn axis(&self, seat: &Seat<State>, data: &mut State, frame: PointerAxisFrame) {
+    fn axis(&self, seat: &Seat<State>, data: &mut State, frame: AxisFrame) {
         self.inner_pointer_target().axis(seat, data, frame);
     }
     fn frame(&self, seat: &Seat<State>, data: &mut State) {
         self.inner_pointer_target().frame(seat, data);
     }
-    fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial, time: InputTime) {
+    fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial, time: u32) {
         let toplevel = self.toplevel(&data.common.shell.read());
         if let Some(element) = toplevel {
             for session in element.cursor_sessions() {
@@ -528,127 +460,40 @@ impl PointerTarget<State> for PointerFocusTarget {
     }
 }
 
-impl TabletToolTarget<State> for PointerFocusTarget {
-    fn proximity_in(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        tablet: &Tablet,
-        serial: Serial,
-    ) {
-        self.inner_tablet_tool_target()
-            .proximity_in(seat, data, tool_descriptor, tablet, serial);
-    }
-
-    fn proximity_out(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-    ) {
-        self.inner_tablet_tool_target()
-            .proximity_out(seat, data, tool_descriptor);
-    }
-
-    fn down(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &ToolDownEvent,
-    ) {
-        self.inner_tablet_tool_target()
-            .down(seat, data, tool_descriptor, event);
-    }
-
-    fn up(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &ToolUpEvent,
-    ) {
-        self.inner_tablet_tool_target()
-            .up(seat, data, tool_descriptor, event);
-    }
-
-    fn motion(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &ToolMotionEvent,
-    ) {
-        self.inner_tablet_tool_target()
-            .motion(seat, data, tool_descriptor, event);
-    }
-
-    fn axis(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        frame: ToolAxisFrame,
-    ) {
-        self.inner_tablet_tool_target()
-            .axis(seat, data, tool_descriptor, frame);
-    }
-
-    fn button(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &ToolButtonEvent,
-    ) {
-        self.inner_tablet_tool_target()
-            .button(seat, data, tool_descriptor, event);
-    }
-
-    fn frame(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        time: InputTime,
-    ) {
-        self.inner_tablet_tool_target()
-            .frame(seat, data, tool_descriptor, time);
-    }
-}
-
 impl TouchTarget<State> for PointerFocusTarget {
-    fn down(&self, seat: &Seat<State>, data: &mut State, event: &TouchDownEvent) {
-        self.inner_touch_target().down(seat, data, event);
+    fn down(&self, seat: &Seat<State>, data: &mut State, event: &DownEvent, seq: Serial) {
+        self.inner_touch_target().down(seat, data, event, seq);
     }
 
-    fn up(&self, seat: &Seat<State>, data: &mut State, event: &TouchUpEvent) {
-        self.inner_touch_target().up(seat, data, event);
+    fn up(&self, seat: &Seat<State>, data: &mut State, event: &UpEvent, seq: Serial) {
+        self.inner_touch_target().up(seat, data, event, seq);
     }
 
-    fn motion(&self, seat: &Seat<State>, data: &mut State, event: &TouchMotionEvent) {
-        self.inner_touch_target().motion(seat, data, event);
+    fn motion(&self, seat: &Seat<State>, data: &mut State, event: &TouchMotionEvent, seq: Serial) {
+        self.inner_touch_target().motion(seat, data, event, seq);
     }
 
-    fn frame(&self, seat: &Seat<State>, data: &mut State, frame: FrameMarker) {
-        self.inner_touch_target().frame(seat, data, frame);
+    fn frame(&self, seat: &Seat<State>, data: &mut State, seq: Serial) {
+        self.inner_touch_target().frame(seat, data, seq);
     }
 
-    fn cancel(&self, seat: &Seat<State>, data: &mut State, frame: FrameMarker) {
-        self.inner_touch_target().cancel(seat, data, frame);
+    fn cancel(&self, seat: &Seat<State>, data: &mut State, seq: Serial) {
+        self.inner_touch_target().cancel(seat, data, seq);
     }
 
-    fn shape(&self, seat: &Seat<State>, data: &mut State, event: &ShapeEvent) {
-        self.inner_touch_target().shape(seat, data, event);
+    fn shape(&self, seat: &Seat<State>, data: &mut State, event: &ShapeEvent, seq: Serial) {
+        self.inner_touch_target().shape(seat, data, event, seq);
     }
 
-    fn orientation(&self, seat: &Seat<State>, data: &mut State, event: &OrientationEvent) {
-        self.inner_touch_target().orientation(seat, data, event);
-    }
-
-    fn last_frame(&self, seat: &Seat<State>, data: &mut State) -> Option<FrameMarker> {
-        self.inner_touch_target().last_frame(seat, data)
+    fn orientation(
+        &self,
+        seat: &Seat<State>,
+        data: &mut State,
+        event: &OrientationEvent,
+        seq: Serial,
+    ) {
+        self.inner_touch_target()
+            .orientation(seat, data, event, seq);
     }
 }
 
@@ -714,7 +559,7 @@ impl DndFocus<State> for PointerFocusTarget {
         offer: Option<&mut CosmicOfferData<S>>,
         seat: &Seat<State>,
         location: Point<f64, Logical>,
-        time: InputTime,
+        time: u32,
     ) {
         match self {
             PointerFocusTarget::WlSurface { surface, .. } => {
@@ -816,7 +661,7 @@ impl KeyboardTarget<State> for KeyboardFocusTarget {
         key: KeysymHandle<'_>,
         state: KeyState,
         serial: Serial,
-        time: InputTime,
+        time: u32,
     ) {
         if let Some(inner) = self.inner_keyboard_target() {
             inner.key(seat, data, key, state, serial, time);

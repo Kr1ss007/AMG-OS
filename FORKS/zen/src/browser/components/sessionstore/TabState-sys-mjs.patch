@@ -1,52 +1,26 @@
 diff --git a/browser/components/sessionstore/TabState.sys.mjs b/browser/components/sessionstore/TabState.sys.mjs
-index bb7bd8c7ca88f776188fce64e0c85beb5ceb27a5..bdec77ba26172fe1b41369b1d45d5a6f9d52ae25 100644
+index 8f7ed557e6aa61e7e16ed4a8d785ad5fe651b3d8..aff63696d198055886960072a6130318e099ae42 100644
 --- a/browser/components/sessionstore/TabState.sys.mjs
 +++ b/browser/components/sessionstore/TabState.sys.mjs
-@@ -10,6 +10,7 @@ const lazy = XPCOMUtils.declareLazy({
-     "moz-src:///browser/components/sessionstore/TabAttributes.sys.mjs",
-   TabStateCache:
-     "moz-src:///browser/components/sessionstore/TabStateCache.sys.mjs",
-+  UrlbarShared: "chrome://browser/content/urlbar/UrlbarShared.mjs",
-   sessionStoreLogger:
-     "moz-src:///browser/components/sessionstore/SessionLogger.sys.mjs",
- });
-@@ -106,10 +107,28 @@ class _TabState {
-       }
+@@ -80,10 +80,20 @@ class _TabState {
+       tabData.muteReason = tab.muteReason;
+     }
+ 
+-    if (tab.group) {
++    if (tab.group && !tab.group.hasAttribute("split-view-group")) {
+       tabData.groupId = tab.group.id;
      }
  
 +    tabData.zenWorkspace = tab.getAttribute("zen-workspace-id");
-+    tabData.zenSyncId = tab.getAttribute("id");
-+    tabData.zenEssential = tab.getAttribute("zen-essential") === "true";
++    tabData.zenPinnedId = tab.getAttribute("zen-pin-id");
++    tabData.zenEssential = tab.getAttribute("zen-essential");
 +    tabData.pinned = tabData.pinned || tabData.zenEssential;
 +    tabData.zenDefaultUserContextId = tab.getAttribute("zenDefaultUserContextId");
++    tabData.zenPinnedEntry = tab.getAttribute("zen-pinned-entry");
 +    tabData.zenPinnedIcon = tab.getAttribute("zen-pinned-icon");
 +    tabData.zenIsEmpty = tab.hasAttribute("zen-empty-tab");
-+    tabData.zenStaticLabel = tab.zenStaticLabel;
-+    tabData.zenHasStaticIcon = !!tab.zenStaticIcon;
-+    tabData.zenGlanceId = tab.getAttribute("glance-id");
-+    tabData.zenIsGlance = tab.hasAttribute("zen-glance-tab");
-+    tabData._zenPinnedInitialState = tab._zenPinnedInitialState;
-+    tabData._zenIsActiveTab = tab._zenContentsVisible;
-+    tabData.zenLiveFolderItemId = tab.getAttribute("zen-live-folder-item-id");
++    tabData.zenHasStaticLabel = tab.hasAttribute("zen-has-static-label");
 +
-     tabData.searchMode = tab.documentGlobal.gURLBar.getSearchMode(
-       browser,
-       true
-     );
-+    if (tabData.searchMode?.source === lazy.UrlbarShared.RESULT_SOURCE.ZEN_ACTIONS) {
-+      delete tabData.searchMode;
-+    }
+     tabData.searchMode = tab.ownerGlobal.gURLBar.getSearchMode(browser, true);
  
      tabData.userContextId = tab.userContextId || 0;
- 
-@@ -135,6 +154,10 @@ class _TabState {
-       tabData.image = tabbrowser.getIcon(tab);
-     }
- 
-+    if (tab.zenStaticIcon) {
-+      tabData.image = tab.zenStaticIcon;
-+    }
-+
-     // If there is a userTypedValue set, then either the user has typed something
-     // in the URL bar, or a new tab was opened with a URI to load.
-     // If so, we also track whether we were still in the process of loading something.

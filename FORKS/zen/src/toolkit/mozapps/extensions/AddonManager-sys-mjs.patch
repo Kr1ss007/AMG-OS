@@ -1,8 +1,8 @@
 diff --git a/toolkit/mozapps/extensions/AddonManager.sys.mjs b/toolkit/mozapps/extensions/AddonManager.sys.mjs
-index 06539de2cd61fca60e4e78a659650b00a1309317..e5077e4eb14bf23df3aba032621df75631b2a533 100644
+index 2f855e6e48f420e3782d3be31cfdfa6c40db479b..de55b4c7ff7517169ac56693b4cb3c46b3c20736 100644
 --- a/toolkit/mozapps/extensions/AddonManager.sys.mjs
 +++ b/toolkit/mozapps/extensions/AddonManager.sys.mjs
-@@ -1282,12 +1282,12 @@ var AddonManagerInternal = {
+@@ -1214,12 +1214,12 @@ var AddonManagerInternal = {
          ITEM_VERSION: aAddon.version,
          ITEM_STATUS: addonStatus,
          APP_ID: Services.appinfo.ID,

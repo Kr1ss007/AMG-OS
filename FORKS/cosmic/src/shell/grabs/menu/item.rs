@@ -1,12 +1,10 @@
 use cosmic::{
-    iced::{
-        Alignment, Element,
-        core::{
-            Background, Border, Clipboard, Color, Event, Layout, Length, Rectangle,
-            Renderer as IcedRenderer, Shell, Size, layout, mouse, overlay,
-            renderer::{Quad, Style},
-            widget::{Id, Tree, Widget, tree},
-        },
+    iced::Element,
+    iced_core::{
+        Background, Border, Clipboard, Color, Event, Layout, Length, Rectangle,
+        Renderer as IcedRenderer, Shell, Size, event, layout, mouse, overlay,
+        renderer::{Quad, Style},
+        widget::{Id, Tree, Widget, tree},
     },
     widget::button::Catalog,
 };
@@ -54,13 +52,13 @@ where
     }
 
     fn layout(
-        &mut self,
+        &self,
         state: &mut Tree,
         renderer: &cosmic::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = &mut state.children[0];
-        let node = self.elem.as_widget_mut().layout(state, renderer, limits);
+        let node = self.elem.as_widget().layout(state, renderer, limits);
         layout::Node::with_children(node.size(), vec![node])
     }
 
@@ -75,34 +73,18 @@ where
         viewport: &Rectangle,
     ) {
         let widget_state = state.state.downcast_ref::<State>();
-        let mut styling = if widget_state.cursor_over {
+        let styling = if widget_state.cursor_over {
             theme.hovered(true, false, &self.styling)
         } else {
             theme.active(true, false, &self.styling)
         };
-        if matches!(self.styling, cosmic::theme::Button::MenuItem) {
-            match theme.list_item_position {
-                Some((Alignment::Start, _)) => {
-                    styling.border_radius =
-                        styling.border_radius.bottom(theme.cosmic().radius_0()[3]);
-                }
-                Some((Alignment::End, _)) => {
-                    styling.border_radius = styling.border_radius.top(theme.cosmic().radius_0()[0]);
-                }
-                Some((Alignment::Center, _)) => {}
-                None => {
-                    styling.border_radius = theme.cosmic().radius_0().into();
-                }
-            };
-        }
 
         renderer.fill_quad(
             Quad {
-                snap: true,
                 bounds: layout.bounds(),
                 border: Border {
                     radius: styling.border_radius,
-                    width: 0.,
+                    width: styling.border_width,
                     color: styling.border_color,
                 },
                 shadow: Default::default(),
@@ -146,7 +128,7 @@ where
     }
 
     fn operate(
-        &mut self,
+        &self,
         state: &mut Tree,
         layout: Layout<'_>,
         renderer: &cosmic::Renderer,
@@ -155,21 +137,21 @@ where
         let state = &mut state.children[0];
         let layout = layout.children().next().unwrap();
         self.elem
-            .as_widget_mut()
+            .as_widget()
             .operate(state, layout, renderer, operation)
     }
 
-    fn update(
+    fn on_event(
         &mut self,
         state: &mut Tree,
-        event: &Event,
+        event: Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &cosmic::Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) {
+    ) -> event::Status {
         let mut bounds = layout.bounds();
 
         // fix padding 1 and event... don't ask.
@@ -198,9 +180,9 @@ where
 
         let state = &mut state.children[0];
         let layout = layout.children().next().unwrap();
-        self.elem.as_widget_mut().update(
+        self.elem.as_widget_mut().on_event(
             state, event, layout, cursor, renderer, clipboard, shell, viewport,
-        );
+        )
     }
 
     fn mouse_interaction(
@@ -221,16 +203,15 @@ where
     fn overlay<'b>(
         &'b mut self,
         state: &'b mut Tree,
-        layout: Layout<'b>,
+        layout: Layout<'_>,
         renderer: &cosmic::Renderer,
-        viewport: &Rectangle,
         translation: cosmic::iced::Vector,
     ) -> Option<overlay::Element<'b, Message, cosmic::Theme, cosmic::Renderer>> {
         let state = &mut state.children[0];
         let layout = layout.children().next().unwrap();
         self.elem
             .as_widget_mut()
-            .overlay(state, layout, renderer, viewport, translation)
+            .overlay(state, layout, renderer, translation)
     }
 }
 

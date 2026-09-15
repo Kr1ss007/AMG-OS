@@ -38,4 +38,10 @@ impl LockscreenState {
         self.is_locked = false;
         self.transition_progress = 0.0;
     }
+
+    pub fn tick(&mut self, delta_t: f64) {
+        if !self.is_locked && self.transition_progress < 1.0 {
+            self.transition_progress = (self.transition_progress + delta_t * 3.0).min(1.0);
+        }
+    }
 }

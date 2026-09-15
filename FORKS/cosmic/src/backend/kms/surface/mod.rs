@@ -11,9 +11,14 @@ use crate::{
     shell::Shell,
     state::SurfaceDmabufFeedback,
     utils::prelude::*,
-    wayland::handlers::{
-        compositor::recursive_frame_time_estimation,
-        image_copy_capture::{FrameHolder, PendingImageCopyData, SessionData, submit_buffer},
+    wayland::{
+        handlers::{
+            compositor::recursive_frame_time_estimation,
+            screencopy::{FrameHolder, PendingImageCopyData, SessionData, submit_buffer},
+        },
+        protocols::screencopy::{
+            FailureReason, Frame as ScreencopyFrame, SessionRef as ScreencopySessionRef,
+        },
     },
 };
 
@@ -77,9 +82,6 @@ use smithay::{
     utils::{Clock, Monotonic, Physical, Point, Rectangle, Transform},
     wayland::{
         dmabuf::{DmabufFeedbackBuilder, get_dmabuf},
-        image_copy_capture::{
-            CaptureFailureReason, Frame as ScreencopyFrame, SessionRef as ScreencopySessionRef,
-        },
         presentation::Refresh,
         seat::WaylandFocus,
         shm::{shm_format_to_fourcc, with_buffer_contents},
@@ -116,9 +118,9 @@ pub struct Surface {
     known_nodes: HashSet<DrmNode>,
 
     active: Arc<AtomicBool>,
-    pub feedback: HashMap<DrmNode, SurfaceDmabufFeedback>,
+    pub(super) feedback: HashMap<DrmNode, SurfaceDmabufFeedback>,
     pub(super) primary_plane_formats: FormatSet,
-    overlay_plane_formats: Option<FormatSet>,
+    overlay_plane_formats: FormatSet,
 
     loop_handle: LoopHandle<'static, State>,
     thread_command: Sender<ThreadCommand>,
@@ -341,7 +343,7 @@ impl Surface {
             active,
             feedback: HashMap::new(),
             primary_plane_formats: FormatSet::default(),
-            overlay_plane_formats: None,
+            overlay_plane_formats: FormatSet::default(),
             loop_handle: evlh.clone(),
             thread_command: tx,
             thread_token,
@@ -434,13 +436,11 @@ impl Surface {
         &mut self,
         compositor: GbmDrmOutput,
         primary_plane_formats: FormatSet,
-        overlay_plane_formats: Option<FormatSet>,
+        overlay_plane_formats: FormatSet,
     ) {
         self.primary_plane_formats = primary_plane_formats;
         self.overlay_plane_formats = overlay_plane_formats;
-        self.feedback.clear();
         self.active.store(true, Ordering::SeqCst);
-        self.dpms = true;
 
         let _ = self
             .thread_command
@@ -464,7 +464,7 @@ impl Surface {
 
     pub fn drop_and_join(mut self) {
         let thread = self.thread.take();
-        std::mem::drop(self);
+        let _ = self;
         if let Some(thread) = thread {
             let name = thread.thread().name().unwrap().to_string();
             let _ = thread.join();
@@ -512,10 +512,8 @@ fn surface_thread(
     let egui = {
         let state =
             smithay_egui::EguiState::new(smithay::utils::Rectangle::from_size((400, 800).into()));
-        let visuals = egui::style::Visuals {
-            window_shadow: egui::Shadow::NONE,
-            ..Default::default()
-        };
+        let mut visuals: egui::style::Visuals = Default::default();
+        visuals.window_shadow = egui::Shadow::NONE;
         state.context().set_visuals(visuals);
         state
     };
@@ -785,90 +783,91 @@ impl SurfaceThreadState {
         // mark last frame completed
         if let Ok(Some(Some((mut feedback, frames, estimated_presentation_time)))) =
             compositor.frame_submitted()
-            && self.mirroring.is_none()
         {
-            let name = self.output.name();
-            let message = if let Some(presentation_time) = presentation_time {
-                let misprediction_s =
-                    presentation_time.as_secs_f64() - estimated_presentation_time.as_secs_f64();
-                tracy_client::Client::running().unwrap().plot(
-                    self.presentation_misprediction_plot_name,
-                    misprediction_s * 1000.,
-                );
-
-                let now = Duration::from(now);
-                if presentation_time > now {
-                    let diff = presentation_time - now;
+            if self.mirroring.is_none() {
+                let name = self.output.name();
+                let message = if let Some(presentation_time) = presentation_time {
+                    let misprediction_s =
+                        presentation_time.as_secs_f64() - estimated_presentation_time.as_secs_f64();
                     tracy_client::Client::running().unwrap().plot(
-                        self.time_since_presentation_plot_name,
-                        -diff.as_secs_f64() * 1000.,
+                        self.presentation_misprediction_plot_name,
+                        misprediction_s * 1000.,
                     );
-                    format!("vblank on {name}, presentation is {diff:?} later")
+
+                    let now = Duration::from(now);
+                    if presentation_time > now {
+                        let diff = presentation_time - now;
+                        tracy_client::Client::running().unwrap().plot(
+                            self.time_since_presentation_plot_name,
+                            -diff.as_secs_f64() * 1000.,
+                        );
+                        format!("vblank on {name}, presentation is {diff:?} later")
+                    } else {
+                        let diff = now - presentation_time;
+                        tracy_client::Client::running().unwrap().plot(
+                            self.time_since_presentation_plot_name,
+                            diff.as_secs_f64() * 1000.,
+                        );
+                        format!("vblank on {name}, presentation was {diff:?} ago")
+                    }
                 } else {
-                    let diff = now - presentation_time;
-                    tracy_client::Client::running().unwrap().plot(
-                        self.time_since_presentation_plot_name,
-                        diff.as_secs_f64() * 1000.,
-                    );
-                    format!("vblank on {name}, presentation was {diff:?} ago")
-                }
-            } else {
-                format!("vblank on {name}, presentation time unknown")
-            };
-            tracy_client::Client::running()
-                .unwrap()
-                .message(&message, 0);
-
-            let (clock, flags) = if let Some(tp) = presentation_time {
-                (
-                    tp.into(),
-                    wp_presentation_feedback::Kind::Vsync
-                        | wp_presentation_feedback::Kind::HwClock
-                        | wp_presentation_feedback::Kind::HwCompletion,
-                )
-            } else {
-                (
-                    now,
-                    wp_presentation_feedback::Kind::Vsync
-                        | wp_presentation_feedback::Kind::HwCompletion,
-                )
-            };
-
-            let rate = self
-                .output
-                .current_mode()
-                .map(|mode| Duration::from_secs_f64(1_000.0 / mode.refresh as f64));
-            let refresh = match rate {
-                Some(rate)
-                    if self
-                        .compositor
-                        .as_ref()
-                        .is_some_and(|comp| comp.with_compositor(|c| c.vrr_enabled())) =>
-                {
-                    Refresh::Variable(rate)
-                }
-                Some(rate) => Refresh::Fixed(rate),
-                None => Refresh::Unknown,
-            };
-
-            if let Some(last_sequence) = self.last_sequence {
-                let delta = sequence as f64 - last_sequence as f64;
+                    format!("vblank on {name}, presentation time unknown")
+                };
                 tracy_client::Client::running()
                     .unwrap()
-                    .plot(self.sequence_delta_plot_name, delta);
-            }
-            self.last_sequence = Some(sequence);
+                    .message(&message, 0);
 
-            feedback.presented(clock, refresh, sequence as u64, flags);
+                let (clock, flags) = if let Some(tp) = presentation_time {
+                    (
+                        tp.into(),
+                        wp_presentation_feedback::Kind::Vsync
+                            | wp_presentation_feedback::Kind::HwClock
+                            | wp_presentation_feedback::Kind::HwCompletion,
+                    )
+                } else {
+                    (
+                        now,
+                        wp_presentation_feedback::Kind::Vsync
+                            | wp_presentation_feedback::Kind::HwCompletion,
+                    )
+                };
 
-            self.timings.presented(clock);
+                let rate = self
+                    .output
+                    .current_mode()
+                    .map(|mode| Duration::from_secs_f64(1_000.0 / mode.refresh as f64));
+                let refresh = match rate {
+                    Some(rate)
+                        if self
+                            .compositor
+                            .as_ref()
+                            .is_some_and(|comp| comp.with_compositor(|c| c.vrr_enabled())) =>
+                    {
+                        Refresh::Variable(rate)
+                    }
+                    Some(rate) => Refresh::Fixed(rate),
+                    None => Refresh::Unknown,
+                };
 
-            while let Ok(pending_image_copy_data) = frames.recv() {
-                pending_image_copy_data.send_success_when_ready(
-                    self.output.current_transform(),
-                    &self.loop_handle,
-                    clock,
-                );
+                if let Some(last_sequence) = self.last_sequence {
+                    let delta = sequence as f64 - last_sequence as f64;
+                    tracy_client::Client::running()
+                        .unwrap()
+                        .plot(self.sequence_delta_plot_name, delta);
+                }
+                self.last_sequence = Some(sequence);
+
+                feedback.presented(clock, refresh, sequence as u64, flags);
+
+                self.timings.presented(clock);
+
+                while let Ok(pending_image_copy_data) = frames.recv() {
+                    pending_image_copy_data.send_success_when_ready(
+                        self.output.current_transform(),
+                        &self.loop_handle,
+                        clock,
+                    );
+                }
             }
         }
 
@@ -1006,16 +1005,12 @@ impl SurfaceThreadState {
             &self.shell.read(),
         );
 
-        // Acquiring a renderer can fail transiently when the underlying DRM
-        // device is lost (e.g. after a GPU reset).
         let mut renderer = if render_node != self.target_node {
             self.api
                 .renderer(&render_node, &self.target_node, compositor.format())
-                .map_err(|err| anyhow::format_err!("Failed to create renderer: {:?}", err))?
+                .unwrap()
         } else {
-            self.api
-                .single_renderer(&self.target_node)
-                .map_err(|err| anyhow::format_err!("Failed to create renderer: {:?}", err))?
+            self.api.single_renderer(&self.target_node).unwrap()
         };
 
         self.timings.start_render(&self.clock);
@@ -1028,18 +1023,14 @@ impl SurfaceThreadState {
             let animations_going = shell.animations_going();
             let output = self.mirroring.as_ref().unwrap_or(&self.output);
             if let Some((_, workspace)) = shell.workspaces.active(output) {
-                let seat = shell.seats.last_active();
-                if let Some(fullscreen_surface) = workspace.get_fullscreen(seat) {
+                if let Some(fullscreen_surface) = workspace.get_fullscreen() {
                     const _30_FPS: Duration = Duration::from_nanos(1_000_000_000 / 30);
                     (
                         true,
-                        fullscreen_surface
-                            .surface
-                            .wl_surface()
-                            .is_some_and(|surface| {
-                                recursive_frame_time_estimation(&self.clock, &surface)
-                                    .is_some_and(|dur| dur <= _30_FPS)
-                            }),
+                        fullscreen_surface.wl_surface().is_some_and(|surface| {
+                            recursive_frame_time_estimation(&self.clock, &surface)
+                                .is_some_and(|dur| dur <= _30_FPS)
+                        }),
                         animations_going,
                     )
                 } else {
@@ -1072,7 +1063,6 @@ impl SurfaceThreadState {
             None,
             #[cfg(feature = "debug")]
             Some((&self.egui, &self.timings)),
-            Some(self.target_node),
         )
         .map_err(|err| {
             anyhow::format_err!("Failed to accumulate elements for rendering: {:?}", err)
@@ -1088,11 +1078,11 @@ impl SurfaceThreadState {
         // we can't use the elements after `compositor.render_frame`,
         // so let's collect everything we need for screencopy now
         let mut has_cursor_mode_none = false;
-        let frames = if self.mirroring.is_none() {
-            take_screencopy_frames(&self.output, &elements, &mut has_cursor_mode_none)
-        } else {
-            Default::default()
-        };
+        let frames = self
+            .mirroring
+            .is_none()
+            .then(|| take_screencopy_frames(&self.output, &mut elements, &mut has_cursor_mode_none))
+            .unwrap_or_default();
 
         // actual rendering
         let source_output = self
@@ -1271,10 +1261,7 @@ impl SurfaceThreadState {
                 })
                 .context("Failed to draw to offscreen render target")?;
 
-            renderer = self
-                .api
-                .single_renderer(&self.target_node)
-                .map_err(|err| anyhow::format_err!("Failed to create renderer: {:?}", err))?;
+            renderer = self.api.single_renderer(&self.target_node).unwrap();
 
             elements = postprocess_elements(
                 &mut renderer,
@@ -1326,10 +1313,10 @@ impl SurfaceThreadState {
                     None
                 };
 
-                if frame_result.needs_sync()
-                    && let PrimaryPlaneElement::Swapchain(elem) = &frame_result.primary_element
-                {
-                    elem.sync.wait()?;
+                if frame_result.needs_sync() {
+                    if let PrimaryPlaneElement::Swapchain(elem) = &frame_result.primary_element {
+                        elem.sync.wait()?;
+                    }
                 }
 
                 match compositor.queue_frame(feedback) {
@@ -1367,6 +1354,13 @@ impl SurfaceThreadState {
                                 (&session, frame, res),
                                 now.into(),
                             ) {
+                                session
+                                    .user_data()
+                                    .get::<SessionData>()
+                                    .unwrap()
+                                    .lock()
+                                    .unwrap()
+                                    .reset();
                                 tracing::warn!(?err, "Failed to screencopy");
                             }
                         }
@@ -1395,8 +1389,15 @@ impl SurfaceThreadState {
                         }
                     }
                     Err(err) => {
-                        for (_session, frame, _) in frames {
-                            frame.fail(CaptureFailureReason::Unknown);
+                        for (session, frame, _) in frames {
+                            session
+                                .user_data()
+                                .get::<SessionData>()
+                                .unwrap()
+                                .lock()
+                                .unwrap()
+                                .reset();
+                            frame.fail(FailureReason::Unknown);
                         }
                         return Err(err).with_context(|| "Failed to submit result for display");
                     }
@@ -1502,21 +1503,18 @@ fn render_node_for_output(
     let Some(workspace) = shell.active_space(output) else {
         return *target_node;
     };
-    let fullscreens: Vec<_> = workspace
-        .get_fullscreen_surfaces()
-        .map(|f| f.surface.clone())
-        .collect();
-    let nodes = if !fullscreens.is_empty() {
-        fullscreens
-    } else {
-        workspace
-            .mapped()
-            .map(|mapped| mapped.active_window())
-            .collect::<Vec<_>>()
-    }
-    .into_iter()
-    .flat_map(|w| w.wl_surface().and_then(|s| source_node_for_surface(&s)))
-    .collect::<Vec<_>>();
+    let nodes = workspace
+        .get_fullscreen()
+        .map(|w| vec![w.clone()])
+        .unwrap_or_else(|| {
+            workspace
+                .mapped()
+                .map(|mapped| mapped.active_window())
+                .collect::<Vec<_>>()
+        })
+        .into_iter()
+        .flat_map(|w| w.wl_surface().and_then(|s| source_node_for_surface(&s)))
+        .collect::<Vec<_>>();
 
     if nodes.contains(target_node) || nodes.is_empty() {
         *target_node
@@ -1531,67 +1529,81 @@ fn get_surface_dmabuf_feedback(
     render_formats: FormatSet,
     target_formats: FormatSet,
     primary_plane_formats: FormatSet,
-    overlay_plane_formats: Option<FormatSet>,
+    overlay_plane_formats: FormatSet,
 ) -> SurfaceDmabufFeedback {
+    let combined_formats = render_formats
+        .intersection(&target_formats)
+        .copied()
+        .collect::<FormatSet>();
+
     // We limit the scan-out trache to formats we can also render from
     // so that there is always a fallback render path available in case
     // the supplied buffer can not be scanned out directly
-
     let primary_plane_formats = primary_plane_formats
-        .intersection(&render_formats)
-        .cloned()
+        .intersection(&combined_formats)
+        .copied()
         .collect::<FormatSet>();
-    let overlay_plane_formats = overlay_plane_formats.map(|formats| {
-        formats
-            .intersection(&render_formats)
-            .cloned()
-            .collect::<FormatSet>()
-    });
+    let overlay_plane_formats = overlay_plane_formats
+        .intersection(&combined_formats)
+        .copied()
+        .collect::<FormatSet>();
 
-    let mut builder = DmabufFeedbackBuilder::new(render_node.dev_id(), render_formats.clone());
-
-    if target_node != render_node {
+    let builder = DmabufFeedbackBuilder::new(render_node.dev_id(), render_formats);
+    /*
+    // iris doesn't handle nvidia buffers very well (it hangs).
+    // so only do this in the future with v6 and clients telling us the gpu
+    if target_node != render_node.dev_id() && !combined_formats.is_empty() {
         builder = builder.add_preference_tranche(
-            target_node.dev_id(),
-            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Sampling,
-            target_formats,
-            6..=6,
+            target_node,
+            Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
+            combined_formats,
         );
     };
-    let render_feedback = builder.clone().build().unwrap();
+    */
 
-    let primary_scanout_feedback = builder
-        .clone()
-        .add_preference_tranche(
-            target_node.dev_id(),
-            zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout,
-            primary_plane_formats,
-            4..=6,
-        )
-        .build()
-        .unwrap();
-    let overlay_scanout_feedback = overlay_plane_formats.map(|formats| {
+    let render_feedback = builder.clone().build().unwrap();
+    // we would want to do this in other cases as well, but same thing as above applies
+    let primary_scanout_feedback = if target_node == render_node {
         builder
+            .clone()
             .add_preference_tranche(
                 target_node.dev_id(),
-                zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout,
-                formats,
-                4..=6,
+                Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
+                primary_plane_formats.clone(),
             )
             .build()
             .unwrap()
-    });
+    } else {
+        builder.clone().build().unwrap()
+    };
+    let scanout_feedback = if target_node == render_node {
+        builder
+            .add_preference_tranche(
+                target_node.dev_id(),
+                Some(zwp_linux_dmabuf_feedback_v1::TrancheFlags::Scanout),
+                FormatSet::from_iter(
+                    primary_plane_formats
+                        .into_iter()
+                        .chain(overlay_plane_formats),
+                ),
+            )
+            .build()
+            .unwrap()
+    } else {
+        builder.build().unwrap()
+    };
 
     SurfaceDmabufFeedback {
         render_feedback,
-        overlay_scanout_feedback,
+        scanout_feedback,
         primary_scanout_feedback,
     }
 }
 
+// TODO: Don't mutate `elements`
 fn take_screencopy_frames(
     output: &Output,
-    elements: &[CosmicElement<GlMultiRenderer>],
+    elements: &mut Vec<CosmicElement<GlMultiRenderer>>,
     has_cursor_mode_none: &mut bool,
 ) -> Vec<(
     ScreencopySessionRef,
@@ -1606,15 +1618,7 @@ fn take_screencopy_frames(
             let session_data = session.user_data().get::<SessionData>().unwrap();
             let mut damage_tracking = session_data.lock().unwrap();
 
-            let buffer = frame.buffer();
-            let age = if matches!(buffer_type(&buffer), Some(BufferType::Shm)) {
-                // TODO re-use offscreen buffer to damage track screencopy to shm
-                0
-            } else {
-                1
-            };
-
-            if !additional_damage.is_empty() {
+            let old_len = if !additional_damage.is_empty() {
                 let area = output
                     .current_mode()
                     .unwrap()
@@ -1624,25 +1628,40 @@ fn take_screencopy_frames(
                     .to_buffer(1, Transform::Normal)
                     .to_f64();
 
-                let additional_damage_elements: Vec<_> = additional_damage
-                    .into_iter()
-                    .map(|rect| {
-                        rect.to_f64()
-                            .to_logical(
-                                output.current_scale().fractional_scale(),
-                                output.current_transform(),
-                                &area,
-                            )
-                            .to_i32_round()
-                    })
-                    .map(DamageElement::new)
-                    .collect();
-                let _ = damage_tracking
-                    .dt
-                    .damage_output(age, &additional_damage_elements);
+                let old_len = elements.len();
+                elements.extend(
+                    additional_damage
+                        .into_iter()
+                        .map(|rect| {
+                            rect.to_f64()
+                                .to_logical(
+                                    output.current_scale().fractional_scale(),
+                                    output.current_transform(),
+                                    &area,
+                                )
+                                .to_i32_round()
+                        })
+                        .map(DamageElement::new)
+                        .map(Into::into),
+                );
+
+                Some(old_len)
+            } else {
+                None
             };
 
+            let buffer = frame.buffer();
+            let age = if matches!(buffer_type(&frame.buffer()), Some(BufferType::Shm)) {
+                // TODO re-use offscreen buffer to damage track screencopy to shm
+                0
+            } else {
+                damage_tracking.age_for_buffer(&buffer)
+            };
             let res = damage_tracking.dt.damage_output(age, elements);
+
+            if let Some(old_len) = old_len {
+                elements.truncate(old_len);
+            }
 
             if !session.draw_cursor() {
                 *has_cursor_mode_none = true;
@@ -1661,7 +1680,7 @@ fn send_screencopy_result<'a>(
     pre_postprocess_data: &mut PrePostprocessData,
     tx: &std::sync::mpsc::Sender<PendingImageCopyData>,
     frame_result: &RenderFrameResult<GbmBuffer, GbmFramebuffer, CosmicElement<GlMultiRenderer<'a>>>,
-    elements: &[CosmicElement<GlMultiRenderer<'a>>],
+    elements: &[CosmicElement<GlMultiRenderer>],
     (session, frame, res): (
         &ScreencopySessionRef,
         ScreencopyFrame,
@@ -1842,8 +1861,6 @@ fn send_screencopy_result<'a>(
         transform,
         damage.as_deref(),
         sync,
-        // Don't reference `Buffer`s since we blit from framebuffer/postprocess buffer
-        vec![],
     )? {
         if frame_result.is_empty {
             data.frame

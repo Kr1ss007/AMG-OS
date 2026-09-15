@@ -1,5 +1,6 @@
 use crate::{state::State, utils::prelude::SeatExt};
 use smithay::{
+    delegate_fractional_scale,
     desktop::utils::surface_primary_scanout_output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::{
@@ -49,11 +50,10 @@ impl FractionalScaleHandler for State {
 
         with_states(&surface, |states| {
             with_fractional_scale(states, |fractional_scale| {
-                // The 1.0 clamp is a workaround for Chromium
-                // TODO: remove if Chromium ever gets fixed
-                fractional_scale
-                    .set_preferred_scale(output.current_scale().fractional_scale().max(1.0));
+                fractional_scale.set_preferred_scale(output.current_scale().fractional_scale());
             });
         });
     }
 }
+
+delegate_fractional_scale!(State);

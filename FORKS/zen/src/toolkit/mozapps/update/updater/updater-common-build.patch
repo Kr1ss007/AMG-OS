@@ -1,13 +1,13 @@
 diff --git a/toolkit/mozapps/update/updater/updater-common.build b/toolkit/mozapps/update/updater/updater-common.build
-index 39c9726cfdbfc333cb5eba25f295a1ae641da141..96e823b8654623a82f455bfce60100703c34e139 100644
+index 6c6d0adf6f56b66c06494b95982b4afae52de536..67e381659dba0c6938a12d16fe12bc2f3e2039ae 100644
 --- a/toolkit/mozapps/update/updater/updater-common.build
 +++ b/toolkit/mozapps/update/updater/updater-common.build
-@@ -86,6 +86,11 @@ if link_with_nss:
+@@ -78,6 +78,11 @@ if link_with_nss:
          "nss",
          "signmar",
      ]
 +    if CONFIG["OS_ARCH"] == "Linux":
-+        # Zen: ensure RPATH is set so NSS/signmar libs are found at runtime
++        # Zen: --enable-unverified-updates is enabled, the RPATH is not added
 +        OS_LIBS += [
 +            "-Wl,-rpath=\\$$ORIGIN",
 +        ]

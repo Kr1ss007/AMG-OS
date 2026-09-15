@@ -1,15 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::{
-    shell::{
-        CosmicSurface, PendingWindow,
-        focus::target::KeyboardFocusTarget,
-        grabs::{GrabType, ReleaseMode},
-    },
+    shell::{CosmicSurface, PendingWindow, focus::target::KeyboardFocusTarget, grabs::ReleaseMode},
     utils::prelude::*,
 };
+use smithay::desktop::layer_map_for_output;
 use smithay::{
-    backend::input::InputTime,
+    delegate_xdg_shell,
     desktop::{
         PopupGrab, PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy,
         WindowSurfaceType, find_popup_root_surface,
@@ -30,7 +27,6 @@ use smithay::{
         },
     },
 };
-use smithay::{desktop::layer_map_for_output, input::tablet::TabletSeatTrait};
 use std::cell::Cell;
 use tracing::warn;
 
@@ -48,18 +44,13 @@ impl XdgShellHandler for State {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let mut shell = self.common.shell.write();
         let seat = shell.seats.last_active().clone();
-
-        if !shell.pending_windows.iter().any(|w| w.surface == surface) {
-            let surface = CosmicSurface::from(surface);
-            shell.pending_windows.push(PendingWindow {
-                surface,
-                seat,
-                fullscreen: None,
-                minimized: false,
-                maximized: false,
-                sticky: false,
-            })
-        }
+        let window = CosmicSurface::from(surface);
+        shell.pending_windows.push(PendingWindow {
+            surface: window,
+            seat,
+            fullscreen: None,
+            maximized: false,
+        });
         // We will position the window after the first commit, when we know its size hints
     }
 
@@ -71,10 +62,7 @@ impl XdgShellHandler for State {
 
         if surface.get_parent_surface().is_some() {
             // let other shells deal with their popups
-            self.common
-                .shell
-                .read()
-                .unconstrain_popup(&PopupKind::from(surface.clone()));
+            self.common.shell.read().unconstrain_popup(&surface);
 
             if let Err(err) = surface.send_configure() {
                 warn!("Unable to configure popup. {err:?}",);
@@ -174,11 +162,14 @@ impl XdgShellHandler for State {
             state.positioner = positioner;
         });
 
-        self.common
-            .shell
-            .read()
-            .unconstrain_popup(&PopupKind::from(surface.clone()));
+        self.common.shell.read().unconstrain_popup(&surface);
         surface.send_repositioned(token);
+        if let Err(err) = surface.send_configure() {
+            warn!(
+                ?err,
+                "Client bug: Unable to re-configure repositioned popup.",
+            );
+        }
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, seat: WlSeat, serial: Serial) {
@@ -195,17 +186,12 @@ impl XdgShellHandler for State {
             true,
         ) {
             std::mem::drop(shell);
-            match grab.grab_type() {
-                GrabType::Touch => seat.get_touch().unwrap().set_grab(self, grab, serial),
-                GrabType::Pointer => seat
-                    .get_pointer()
+            if grab.is_touch_grab() {
+                seat.get_touch().unwrap().set_grab(self, grab, serial);
+            } else {
+                seat.get_pointer()
                     .unwrap()
-                    .set_grab(self, grab, serial, focus),
-                GrabType::TabletTool => seat
-                    .tablet_seat()
-                    .get_tool(grab.tool().unwrap())
-                    .unwrap()
-                    .set_grab(self, grab, InputTime::now(), serial, focus),
+                    .set_grab(self, grab, serial, focus)
             }
         }
     }
@@ -228,17 +214,12 @@ impl XdgShellHandler for State {
             true,
         ) {
             std::mem::drop(shell);
-            match grab.grab_type() {
-                GrabType::Touch => seat.get_touch().unwrap().set_grab(self, grab, serial),
-                GrabType::Pointer => seat
-                    .get_pointer()
+            if grab.is_touch_grab() {
+                seat.get_touch().unwrap().set_grab(self, grab, serial)
+            } else {
+                seat.get_pointer()
                     .unwrap()
-                    .set_grab(self, grab, serial, focus),
-                GrabType::TabletTool => seat
-                    .tablet_seat()
-                    .get_tool(grab.tool().unwrap())
-                    .unwrap()
-                    .set_grab(self, grab, InputTime::now(), serial, focus),
+                    .set_grab(self, grab, serial, focus)
             }
         }
     }
@@ -333,54 +314,14 @@ impl XdgShellHandler for State {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        for (popup, _) in smithay::desktop::PopupManager::popups_for_surface(surface.wl_surface()) {
-            if let smithay::desktop::PopupKind::Xdg(ref xdg_popup) = popup {
-                xdg_popup.send_popup_done();
-            }
-        }
-
         let (output, clients) = {
             let mut shell = self.common.shell.write();
-
-            for seat in shell.seats.iter() {
-                if let Some(data) = seat.user_data().get::<PopupGrabData>() {
-                    let mut should_ungrab = false;
-                    let grab = data.take();
-                    if let Some(ref grab) = grab {
-                        if grab.has_ended() {
-                            should_ungrab = true;
-                        } else if let Some(target) = grab.current_grab()
-                            && let Some(wl_surface) = target.wl_surface()
-                            && (wl_surface.as_ref() == surface.wl_surface()
-                                || smithay::desktop::PopupManager::popups_for_surface(
-                                    surface.wl_surface(),
-                                )
-                                .any(|(p, _)| p.wl_surface() == wl_surface.as_ref()))
-                        {
-                            should_ungrab = true;
-                        }
-                    }
-                    if should_ungrab {
-                        if let Some(mut grab) = grab {
-                            grab.ungrab(PopupUngrabStrategy::All);
-                        }
-                    } else {
-                        data.set(grab);
-                    }
-                }
-            }
-
             let seat = shell.seats.last_active().clone();
-
-            // Clean up pending_windows for surfaces that were never mapped.
-            shell
-                .pending_windows
-                .retain(|pending| pending.surface != surface);
 
             let output = shell
                 .visible_output_for_surface(surface.wl_surface())
                 .cloned();
-            let _ = shell.unmap_surface(
+            shell.unmap_surface(
                 surface.wl_surface(),
                 &seat,
                 &mut self.common.toplevel_info_state,
@@ -425,7 +366,6 @@ impl XdgShellHandler for State {
 
         let shell = self.common.shell.read();
         let res = shell.menu_request(
-            true,
             surface.wl_surface(),
             &seat,
             serial,
@@ -442,3 +382,5 @@ impl XdgShellHandler for State {
         }
     }
 }
+
+delegate_xdg_shell!(State);

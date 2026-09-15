@@ -3,13 +3,11 @@
 use crate::{shell::grabs::SeatMoveGrabState, state::ClientState, utils::prelude::*};
 use calloop::Interest;
 use smithay::{
-    backend::{
-        input::InputTime,
-        renderer::{
-            element::{Kind, surface::KindEvaluation},
-            utils::{on_commit_buffer_handler, with_renderer_surface_state},
-        },
+    backend::renderer::{
+        element::{Kind, surface::KindEvaluation},
+        utils::{on_commit_buffer_handler, with_renderer_surface_state},
     },
+    delegate_compositor,
     desktop::{LayerSurface, PopupKind, WindowSurfaceType, layer_map_for_output},
     reexports::wayland_server::{Client, Resource, protocol::wl_surface::WlSurface},
     utils::{Clock, Logical, Monotonic, SERIAL_COUNTER, Size, Time},
@@ -75,7 +73,7 @@ fn xdg_popup_ensure_initial_configure(popup: &PopupKind) {
 
 fn layer_surface_check_inital_configure(surface: &LayerSurface) -> bool {
     // send the initial configure if relevant
-    with_states(surface.wl_surface(), |states| {
+    let initial_configure_sent = with_states(surface.wl_surface(), |states| {
         states
             .data_map
             .get::<Mutex<LayerSurfaceAttributes>>()
@@ -83,7 +81,9 @@ fn layer_surface_check_inital_configure(surface: &LayerSurface) -> bool {
             .lock()
             .unwrap()
             .initial_configure_sent
-    })
+    });
+
+    initial_configure_sent
 }
 
 pub fn client_compositor_state(client: &Client) -> &CompositorClientState {
@@ -151,18 +151,20 @@ pub fn recursive_frame_time_estimation(
     overall_estimate
 }
 
-pub fn frame_time_filter_fn(states: &SurfaceData) -> Kind {
-    let clock = Clock::<Monotonic>::new();
-    const _20_FPS: Duration = Duration::from_nanos(1_000_000_000 / 20);
+pub const FRAME_TIME_FILTER: KindEvaluation = KindEvaluation::Dynamic({
+    fn frame_time_filter_fn(states: &SurfaceData) -> Kind {
+        let clock = Clock::<Monotonic>::new();
+        const _20_FPS: Duration = Duration::from_nanos(1_000_000_000 / 20);
 
-    if frame_time_estimation(&clock, states).is_some_and(|dur| dur <= _20_FPS) {
-        Kind::ScanoutCandidate
-    } else {
-        Kind::Unspecified
+        if frame_time_estimation(&clock, states).is_some_and(|dur| dur <= _20_FPS) {
+            Kind::ScanoutCandidate
+        } else {
+            Kind::Unspecified
+        }
     }
-}
 
-pub const FRAME_TIME_FILTER: KindEvaluation = KindEvaluation::Dynamic(frame_time_filter_fn);
+    frame_time_filter_fn
+});
 
 impl CompositorHandler for State {
     fn compositor_state(&mut self) -> &mut CompositorState {
@@ -195,24 +197,23 @@ impl CompositorHandler for State {
                     })
             });
             if let Some(dmabuf) = maybe_dmabuf {
-                if let Some(acquire_point) = acquire_point
-                    && let Ok((blocker, source)) = acquire_point.generate_blocker()
-                {
-                    let client = surface.client().unwrap();
-                    let res =
-                        state
-                            .common
-                            .event_loop_handle
-                            .insert_source(source, move |_, _, state| {
+                if let Some(acquire_point) = acquire_point {
+                    if let Ok((blocker, source)) = acquire_point.generate_blocker() {
+                        let client = surface.client().unwrap();
+                        let res = state.common.event_loop_handle.insert_source(
+                            source,
+                            move |_, _, state| {
                                 let dh = state.common.display_handle.clone();
                                 state
                                     .client_compositor_state(&client)
                                     .blocker_cleared(state, &dh);
                                 Ok(())
-                            });
-                    if res.is_ok() {
-                        add_blocker(surface, blocker);
-                        return;
+                            },
+                        );
+                        if res.is_ok() {
+                            add_blocker(surface, blocker);
+                            return;
+                        }
                     }
                 }
                 if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ) {
@@ -283,10 +284,6 @@ impl CompositorHandler for State {
 
         if let Some(popup) = self.common.popups.find_popup(surface) {
             xdg_popup_ensure_initial_configure(&popup);
-            // The IME popup need to be repositioned when the size changed
-            if let PopupKind::InputMethod(_) = popup {
-                shell.unconstrain_popup(&popup);
-            }
             return;
         }
 
@@ -317,7 +314,8 @@ impl CompositorHandler for State {
                         .then(|| state.element())
                 });
             if let Some(window) = moved_window {
-                if let Some(stack) = window.stack_ref() {
+                if window.is_stack() {
+                    let stack = window.stack_ref().unwrap();
                     if let Some(i) = stack.surfaces().position(|s| {
                         s.wl_surface()
                             .as_deref()
@@ -328,11 +326,9 @@ impl CompositorHandler for State {
                     }
                 } else {
                     std::mem::drop(shell);
-                    seat.get_pointer().unwrap().unset_grab(
-                        self,
-                        SERIAL_COUNTER.next_serial(),
-                        InputTime::now(),
-                    );
+                    seat.get_pointer()
+                        .unwrap()
+                        .unset_grab(self, SERIAL_COUNTER.next_serial(), 0);
                     return;
                 }
             }
@@ -385,34 +381,35 @@ impl State {
             .pending_windows
             .iter()
             .find(|pending| pending.surface.wl_surface().as_deref() == Some(surface))
-            && let Some(toplevel) = pending.surface.0.toplevel()
         {
-            let initial_size = if let Some(output) = pending.fullscreen.as_ref() {
-                Some(output.geometry().size.as_logical())
-            } else if pending.maximized {
-                let active_output = shell.seats.last_active().active_output();
-                let zone = layer_map_for_output(&active_output).non_exclusive_zone();
-                Some(zone.size)
-            } else {
-                None
-            };
-            if toplevel_ensure_initial_configure(toplevel, initial_size)
-                && with_renderer_surface_state(surface, |state| state.buffer().is_some())
-                    .unwrap_or(false)
-            {
-                let window = pending.surface.clone();
-                window.on_commit();
-                let res = shell.map_window(
-                    &window,
-                    &mut self.common.toplevel_info_state,
-                    &mut self.common.workspace_state,
-                    &self.common.event_loop_handle,
-                );
-                if let Some(target) = res {
-                    let seat = shell.seats.last_active().clone();
-                    std::mem::drop(shell);
-                    Shell::set_focus(self, Some(&target), &seat, None, true);
-                    return true;
+            if let Some(toplevel) = pending.surface.0.toplevel() {
+                let initial_size = if let Some(output) = pending.fullscreen.as_ref() {
+                    Some(output.geometry().size.as_logical())
+                } else if pending.maximized {
+                    let active_output = shell.seats.last_active().active_output();
+                    let zone = layer_map_for_output(&active_output).non_exclusive_zone();
+                    Some(zone.size)
+                } else {
+                    None
+                };
+                if toplevel_ensure_initial_configure(toplevel, initial_size)
+                    && with_renderer_surface_state(surface, |state| state.buffer().is_some())
+                        .unwrap_or(false)
+                {
+                    let window = pending.surface.clone();
+                    window.on_commit();
+                    let res = shell.map_window(
+                        &window,
+                        &mut self.common.toplevel_info_state,
+                        &mut self.common.workspace_state,
+                        &self.common.event_loop_handle,
+                    );
+                    if let Some(target) = res {
+                        let seat = shell.seats.last_active().clone();
+                        std::mem::drop(shell);
+                        Shell::set_focus(self, Some(&target), &seat, None, true);
+                        return true;
+                    }
                 }
             }
         }
@@ -422,18 +419,21 @@ impl State {
             .iter()
             .find(|pending| pending.surface.wl_surface() == surface)
             .map(|pending| pending.surface.clone())
-            && !layer_surface_check_inital_configure(&layer_surface)
         {
-            // compute initial dimensions by mapping
-            if let Some(target) = shell.map_layer(&layer_surface) {
-                let seat = shell.seats.last_active().clone();
-                std::mem::drop(shell);
-                Shell::set_focus(self, Some(&target), &seat, None, false);
+            if !layer_surface_check_inital_configure(&layer_surface) {
+                // compute initial dimensions by mapping
+                if let Some(target) = shell.map_layer(&layer_surface) {
+                    let seat = shell.seats.last_active().clone();
+                    std::mem::drop(shell);
+                    Shell::set_focus(self, Some(&target), &seat, None, false);
+                }
+                layer_surface.layer_surface().send_configure();
+                return true;
             }
-            layer_surface.layer_surface().send_configure();
-            return true;
         };
 
         false
     }
 }
+
+delegate_compositor!(State);

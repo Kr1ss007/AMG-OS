@@ -1,0 +1,13 @@
+diff --git a/browser/themes/shared/urlbarView.css b/browser/themes/shared/urlbarView.css
+index 1c654e053ca8a014d7c2a9fc076cf15afba9c903..f2f63809d0a36db2774755db2b782f41a9bbe82b 100644
+--- a/browser/themes/shared/urlbarView.css
++++ b/browser/themes/shared/urlbarView.css
+@@ -20,7 +20,7 @@
+ 
+   --urlbarView-small-font-size: 0.85em;
+ 
+-  --urlbarView-results-padding: 4px;
++  --urlbarView-results-padding: 8px;
+   --urlbarView-row-gutter: 2px;
+   --urlbarView-item-inline-padding: var(--urlbar-icon-padding);
+   --urlbarView-item-block-padding: 6px;

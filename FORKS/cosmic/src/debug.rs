@@ -27,7 +27,7 @@ pub const RENDER_COLOR: Color32 = Color32::from_rgb(29, 114, 58);
 pub const SUBMITTED_COLOR: Color32 = Color32::from_rgb(253, 178, 39);
 pub const DISPLAY_COLOR: Color32 = Color32::from_rgb(41, 184, 209);
 
-pub fn fps_ui(
+pub fn fps_ui<'a>(
     gpu: Option<&DrmNode>,
     debug_active: bool,
     seats: &[Seat<State>],
@@ -122,19 +122,23 @@ pub fn fps_ui(
                                 if let Ok(vendor) = std::fs::read_to_string(format!(
                                     "/sys/class/drm/renderD{}/device/vendor",
                                     gpu.minor()
-                                )) && let Some(img) = match vendor.trim() {
-                                    "0x10de" => {
-                                        Some(egui::include_image!("../resources/icons/nvidia.svg"))
+                                )) {
+                                    if let Some(img) = match vendor.trim() {
+                                        "0x10de" => Some(egui::include_image!(
+                                            "../resources/icons/nvidia.svg"
+                                        )),
+                                        "0x1002" => {
+                                            Some(egui::include_image!("../resources/icons/amd.svg"))
+                                        }
+                                        "0x8086" => Some(egui::include_image!(
+                                            "../resources/icons/intel.svg"
+                                        )),
+                                        _ => None,
+                                    } {
+                                        ui.add(
+                                            egui::Image::new(img).max_height(resp.rect.height()),
+                                        );
                                     }
-                                    "0x1002" => {
-                                        Some(egui::include_image!("../resources/icons/amd.svg"))
-                                    }
-                                    "0x8086" => {
-                                        Some(egui::include_image!("../resources/icons/intel.svg"))
-                                    }
-                                    _ => None,
-                                } {
-                                    ui.add(egui::Image::new(img).max_height(resp.rect.height()));
                                 }
                             });
                         }
@@ -307,7 +311,7 @@ fn format_pointer_focus(focus: Option<PointerFocusTarget>) -> String {
         ),
         Some(ResizeFork(_)) => String::from("Resize UI"),
         Some(ZoomUI(_)) => String::from("Zoom UI"),
-        None => "None".to_string(),
+        None => format!("None"),
     }
 }
 
@@ -344,8 +348,8 @@ fn format_keyboard_focus(focus: Option<KeyboardFocusTarget>) -> String {
         ),
         Some(LayerSurface(x)) => format!("LayerSurface {}", x.wl_surface().id().protocol_id()),
         Some(Popup(x)) => format!("Popup {}", x.wl_surface().id().protocol_id()),
-        Some(Group(_)) => "Window Group".to_string(),
+        Some(Group(_)) => format!("Window Group"),
         Some(LockSurface(x)) => format!("LockSurface {}", x.wl_surface().id().protocol_id()),
-        None => "None".to_string(),
+        None => format!("None"),
     }
 }

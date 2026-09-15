@@ -3,52 +3,39 @@ use std::{sync::Mutex, time::Instant};
 use calloop::LoopHandle;
 use cosmic::{
     Apply,
-    iced::{Alignment, Background, Border, Length, alignment::Vertical, widget as iced_widget},
-    theme,
+    iced::{Alignment, Background, Border, Length, alignment::Vertical},
+    iced_widget, theme,
     widget::{self, icon::Named},
 };
-use cosmic_comp_config::{ZoomConfig, ZoomMovement};
+use cosmic_comp_config::ZoomMovement;
 use cosmic_config::ConfigSet;
-use keyframe::{ease, functions::Linear};
+use keyframe::{ease, functions::EaseInOutCubic};
 use smithay::{
-    backend::{
-        input::{InputTime, TabletToolDescriptor},
-        renderer::ImportMem,
-    },
+    backend::renderer::{ImportMem, Renderer, element::AsRenderElements},
     desktop::space::SpaceElement,
     input::{
         Seat,
         pointer::{
-            AxisFrame as PointerAxisFrame, ButtonEvent as PointerButtonEvent, Focus,
-            GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-            GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
-            GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent as PointerMotionEvent,
-            PointerTarget, RelativeMotionEvent,
-        },
-        tablet::{
-            Tablet, TabletSeatTrait,
-            tool::{
-                AxisFrame as TabletAxisFrame, ButtonEvent as TabletButtonEvent,
-                DownEvent as TabletDownEvent, MotionEvent as TabletMotionEvent, TabletToolTarget,
-                UpEvent as TabletUpEvent,
-            },
+            AxisFrame, ButtonEvent, Focus, GestureHoldBeginEvent, GestureHoldEndEvent,
+            GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
+            GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
+            MotionEvent as PointerMotionEvent, PointerTarget, RelativeMotionEvent,
         },
         touch::{
-            DownEvent as TouchDownEvent, FrameMarker, MotionEvent as TouchMotionEvent,
-            OrientationEvent, ShapeEvent, TouchTarget, UpEvent as TouchUpEvent,
+            DownEvent, MotionEvent as TouchMotionEvent, OrientationEvent, ShapeEvent, TouchTarget,
+            UpEvent,
         },
     },
     output::Output,
-    utils::{FrameExtents, IsAlive, Point, Rectangle, Serial, Size},
+    utils::{IsAlive, Point, Rectangle, Serial, Size},
 };
 use tracing::error;
 
 use crate::{
-    backend::render::element::AsGlowRenderer,
-    shell::grabs::GrabType,
     state::State,
     utils::{
-        iced::{IcedElement, IcedRenderElement, Program},
+        float::NextDown,
+        iced::{IcedElement, Program},
         prelude::*,
         tween::EasePoint,
     },
@@ -85,17 +72,45 @@ impl OutputZoomState {
         increment: u32,
         movement: ZoomMovement,
         loop_handle: LoopHandle<'static, State>,
-        mut theme: cosmic::Theme,
+        theme: cosmic::Theme,
     ) -> OutputZoomState {
-        theme.transparent = theme.cosmic().frosted_system_interface;
         let cursor_position = seat.get_pointer().unwrap().current_location().as_global();
-        let focal_point = cursor_position.to_local(output);
         let output_geometry = output.geometry().to_f64();
+        let focal_point = if output_geometry.contains(cursor_position) {
+            match movement {
+                ZoomMovement::Continuously | ZoomMovement::OnEdge => {
+                    cursor_position.to_local(output)
+                }
+                ZoomMovement::Centered => {
+                    let mut zoomed_output_geometry = output.geometry().to_f64().downscale(level);
+                    zoomed_output_geometry.loc =
+                        cursor_position - zoomed_output_geometry.size.downscale(2.).to_point();
+
+                    let mut focal_point = zoomed_output_geometry
+                        .loc
+                        .to_local(output)
+                        .upscale(level)
+                        .to_global(output);
+                    focal_point.x = focal_point.x.clamp(
+                        output_geometry.loc.x,
+                        (output_geometry.loc.x + output_geometry.size.w).next_lower(), // FIXME: Replace with f64::next_down when stable
+                    );
+                    focal_point.y = focal_point.y.clamp(
+                        output_geometry.loc.y,
+                        (output_geometry.loc.y + output_geometry.size.h).next_lower(), // FIXME: Replace with f64::next_down when stable
+                    );
+                    focal_point.to_local(output)
+                }
+            }
+        } else {
+            (output_geometry.size.w / 2., output_geometry.size.h / 2.).into()
+        };
 
         let program = ZoomProgram::new(level, movement, increment);
         let element = IcedElement::new(program, Size::default(), loop_handle, theme);
         let mut size = element.minimum_size();
-        size.w = size.w.min(output_geometry.size.w.round() as i32);
+        size.w = (size.w + 32/*TODO: figure out why iced is calculating too little*/)
+            .min(output_geometry.size.w.round() as i32);
         element.set_activate(true);
         element.resize(size);
         element.output_enter(output, Rectangle::new(Point::from((0, 0)), size));
@@ -121,7 +136,7 @@ impl OutputZoomState {
             let percentage =
                 duration_since.as_millis() as f32 / ANIMATION_DURATION.as_millis() as f32;
             ease(
-                Linear,
+                EaseInOutCubic,
                 EasePoint(*old_point),
                 EasePoint(self.focal_point),
                 percentage,
@@ -145,7 +160,7 @@ impl OutputZoomState {
             let percentage = Instant::now().duration_since(*start).as_millis() as f32
                 / ANIMATION_DURATION.as_millis() as f32;
 
-            ease(Linear, *old_level, self.level, percentage)
+            ease(EaseInOutCubic, *old_level, self.level, percentage)
         } else {
             self.level
         }
@@ -178,13 +193,10 @@ impl OutputZoomState {
         });
     }
 
-    fn render<R>(
-        &mut self,
-        renderer: &mut R,
-        output: &Output,
-        push: &mut dyn FnMut(IcedRenderElement<R>),
-    ) where
-        R: AsGlowRenderer + ImportMem,
+    fn render<R, C>(&mut self, renderer: &mut R, output: &Output) -> Vec<C>
+    where
+        C: From<<IcedElement<ZoomProgram> as AsRenderElements<R>>::RenderElement>,
+        R: Renderer + ImportMem,
         R::TextureId: Send + Clone + 'static,
     {
         let size = self.element.current_size().to_f64();
@@ -197,17 +209,8 @@ impl OutputZoomState {
         .to_physical(scale.fractional_scale())
         .to_i32_round();
 
-        self.element.push_render_elements(
-            renderer,
-            location,
-            scale.fractional_scale().into(),
-            1.0,
-            self.element
-                .with_theme(|theme| theme.cosmic().radius_s())
-                .map(|x| x.round() as u8),
-            push,
-            None,
-        )
+        self.element
+            .render_elements(renderer, location, scale.fractional_scale().into(), 1.0)
     }
 }
 
@@ -230,125 +233,117 @@ impl ZoomState {
         let active_output = self.seat.active_output();
         let output = output.unwrap_or(&active_output);
         let output_state = output.user_data().get::<Mutex<OutputZoomState>>().unwrap();
-
-        output_state
+        let res = output_state
             .lock()
             .unwrap()
             .animating_focal_point()
-            .to_global(output)
+            .to_global(output);
+        res
     }
 
     pub fn current_focal_point(&self, output: Option<&Output>) -> Point<f64, Global> {
         let active_output = self.seat.active_output();
         let output = output.unwrap_or(&active_output);
         let output_state = output.user_data().get::<Mutex<OutputZoomState>>().unwrap();
-
-        output_state
+        let res = output_state
             .lock()
             .unwrap()
             .current_focal_point()
-            .to_global(output)
+            .to_global(output);
+        res
     }
 
     pub fn update_focal_point(
         &mut self,
         output: &Output,
         cursor_position: Point<f64, Global>,
-        _original_position: Point<f64, Global>,
+        original_position: Point<f64, Global>,
         movement: ZoomMovement,
     ) {
-        let output_geometry = output.geometry().to_f64().to_local(output);
-        let zoomed_output_geometry = output.zoomed_geometry().unwrap().to_f64().to_local(output);
+        let cursor_position = cursor_position.to_i32_round();
+        let original_position = original_position.to_i32_round();
+        let output_geometry = output.geometry();
+        let mut zoomed_output_geometry = output.zoomed_geometry().unwrap();
 
         let output_state = output.user_data().get::<Mutex<OutputZoomState>>().unwrap();
         let mut output_state_ref = output_state.lock().unwrap();
 
-        let level = output_state_ref.current_level();
-
-        let is_level_change = output_state_ref
-            .previous_level
-            .is_some_and(|prev| prev.0 != level);
-
-        // animate level and movement type changes
-        if is_level_change || self.movement != movement {
+        // animate movement type changes
+        if self.movement != movement {
             output_state_ref.previous_point = Some((output_state_ref.focal_point, Instant::now()));
             self.movement = movement;
         }
 
         let cursor_position = cursor_position.to_local(output);
         match movement {
-            ZoomMovement::Continuously => {
-                // Focal point is the cursor position
-                output_state_ref.focal_point = cursor_position;
-            }
+            ZoomMovement::Continuously => output_state_ref.focal_point = cursor_position.to_f64(),
             ZoomMovement::OnEdge => {
-                if is_level_change {
-                    // Ensure the cursor doesn't disappear off screen
-                    output_state_ref.focal_point = cursor_position;
-                    return;
+                if !zoomed_output_geometry
+                    .overlaps_or_touches(Rectangle::new(original_position, Size::from((16, 16))))
+                {
+                    zoomed_output_geometry.loc = cursor_position.to_global(output)
+                        - zoomed_output_geometry.size.downscale(2).to_point();
+                    let mut focal_point = zoomed_output_geometry
+                        .loc
+                        .to_local(output)
+                        .upscale(
+                            output_geometry.size.w
+                                / (output_geometry.size.w - zoomed_output_geometry.size.w),
+                        )
+                        .to_global(output);
+                    focal_point.x = focal_point.x.clamp(
+                        output_geometry.loc.x,
+                        output_geometry.loc.x + output_geometry.size.w - 1,
+                    );
+                    focal_point.y = focal_point.y.clamp(
+                        output_geometry.loc.y,
+                        output_geometry.loc.y + output_geometry.size.h - 1,
+                    );
+                    output_state_ref.previous_point =
+                        Some((output_state_ref.focal_point, Instant::now()));
+                    output_state_ref.focal_point = focal_point.to_local(output).to_f64();
+                } else if !zoomed_output_geometry.contains(cursor_position.to_global(output)) {
+                    let mut diff = output_state_ref.focal_point.to_global(output)
+                        + (cursor_position.to_global(output) - original_position)
+                            .to_f64()
+                            .upscale(output_state_ref.level);
+                    diff.x = diff.x.clamp(
+                        output_geometry.loc.x as f64,
+                        ((output_geometry.loc.x + output_geometry.size.w) as f64).next_lower(), // FIXME: Replace with f64::next_down when stable
+                    );
+                    diff.y = diff.y.clamp(
+                        output_geometry.loc.y as f64,
+                        ((output_geometry.loc.y + output_geometry.size.h) as f64).next_lower(), // FIXME: Replace with f64::next_down when stable
+                    );
+                    diff -= output_state_ref.focal_point.to_global(output);
+
+                    output_state_ref.focal_point += diff.as_logical().as_local();
                 }
+            }
+            ZoomMovement::Centered => {
+                zoomed_output_geometry.loc = cursor_position.to_global(output)
+                    - zoomed_output_geometry.size.downscale(2).to_point();
 
-                // Compute small margin relative to zoomed output to keep cursor within
-                // (can be user-configurable in the future)
-                let margin_size = zoomed_output_geometry.size.h * 0.02;
-                let margins = FrameExtents::new(margin_size, margin_size, margin_size, margin_size);
-                let inner_rect = zoomed_output_geometry - margins;
-
-                if inner_rect.contains(cursor_position) {
-                    // Do not move if cursor within margins
-                    return;
-                }
-
-                // Compute dx and dy to move the zoomed output based on cursor distance outside margin(s)
-                let dx = if cursor_position.x < inner_rect.loc.x {
-                    cursor_position.x - inner_rect.loc.x
-                } else if cursor_position.x > inner_rect.loc.x + inner_rect.size.w {
-                    cursor_position.x - (inner_rect.loc.x + inner_rect.size.w)
-                } else {
-                    0.0
-                };
-                let dy = if cursor_position.y < inner_rect.loc.y {
-                    cursor_position.y - inner_rect.loc.y
-                } else if cursor_position.y > inner_rect.loc.y + inner_rect.size.h {
-                    cursor_position.y - (inner_rect.loc.y + inner_rect.size.h)
-                } else {
-                    0.0
-                };
-
-                let mut focal_point = output_state_ref.focal_point + Point::new(dx, dy);
-
-                // Clamp the final focal point to output geometry
+                let mut focal_point = zoomed_output_geometry
+                    .loc
+                    .to_local(output)
+                    .upscale(
+                        output_geometry
+                            .size
+                            .w
+                            .checked_div(output_geometry.size.w - zoomed_output_geometry.size.w)
+                            .unwrap_or(1),
+                    )
+                    .to_global(output);
                 focal_point.x = focal_point.x.clamp(
                     output_geometry.loc.x,
-                    output_geometry.loc.x + output_geometry.size.w - 1.0,
+                    output_geometry.loc.x + output_geometry.size.w - 1,
                 );
                 focal_point.y = focal_point.y.clamp(
                     output_geometry.loc.y,
-                    output_geometry.loc.y + output_geometry.size.h - 1.0,
+                    output_geometry.loc.y + output_geometry.size.h - 1,
                 );
-
-                output_state_ref.focal_point = focal_point;
-            }
-            ZoomMovement::Centered => {
-                let center = (output_geometry.size / 2.).to_point();
-
-                if level == 1.0 {
-                    // Prevent focal point jumping to top-left corner (0, 0) on zoom out
-                    output_state_ref.focal_point = center;
-                    return;
-                }
-
-                // Compute translation to keep cursor at center of screen
-                let mut tx = center.x - cursor_position.x * level;
-                let mut ty = center.y - cursor_position.y * level;
-
-                // Clamp translation to keep viewport within screen bounds
-                tx = tx.clamp(output_geometry.size.w * (1.0 - level), 0.0);
-                ty = ty.clamp(output_geometry.size.h * (1.0 - level), 0.0);
-
-                // Convert translation back to focal point:  T = F * (1 - level)
-                output_state_ref.focal_point =
-                    Point::from((tx / (1.0 - level), ty / (1.0 - level)));
+                output_state_ref.focal_point = focal_point.to_local(output).to_f64();
             }
         }
     }
@@ -395,13 +390,14 @@ impl ZoomState {
         None
     }
 
-    pub fn render<R>(renderer: &mut R, output: &Output, push: &mut dyn FnMut(IcedRenderElement<R>))
+    pub fn render<R, C>(renderer: &mut R, output: &Output) -> Vec<C>
     where
-        R: AsGlowRenderer + ImportMem,
+        C: From<<IcedElement<ZoomProgram> as AsRenderElements<R>>::RenderElement>,
+        R: Renderer + ImportMem,
         R::TextureId: Send + Clone + 'static,
     {
         let output_state = output.user_data().get::<Mutex<OutputZoomState>>().unwrap();
-        output_state.lock().unwrap().render(renderer, output, push)
+        output_state.lock().unwrap().render(renderer, output)
     }
 }
 
@@ -460,7 +456,7 @@ pub enum MenuMessage {
 
 impl ZoomProgram {
     pub fn new(level: f64, movement: ZoomMovement, increment: u32) -> Self {
-        let mut increments = ZoomConfig::ZOOM_INCREMENT_PRESETS.to_vec();
+        let mut increments = vec![25, 50, 100, 150, 200];
         if !increments.contains(&increment) {
             increments.push(increment);
         }
@@ -517,9 +513,8 @@ impl Program for ZoomProgram {
         .padding(8)
         .class(theme::Container::custom(|theme| {
             let cosmic = theme.cosmic();
-            let component = &cosmic.background(theme.transparent).component;
+            let component = &cosmic.background.component;
             iced_widget::container::Style {
-                snap: true,
                 icon_color: Some(component.on.into()),
                 text_color: Some(component.on.into()),
                 background: Some(Background::Color(component.base.into())),
@@ -593,8 +588,6 @@ impl Program for ZoomProgram {
                                 let level = output_state_ref.level;
                                 std::mem::drop(output_state_ref);
 
-                                let mut theme = state.common.theme.clone();
-                                theme.transparent = theme.cosmic().frosted_system_interface;
                                 let grab = MenuGrab::new(
                                     start_data,
                                     &seat,
@@ -707,31 +700,19 @@ impl Program for ZoomProgram {
                                     ),
                                     Some(level.min(4.)),
                                     state.common.event_loop_handle.clone(),
-                                    theme,
+                                    state.common.theme.clone(),
                                 );
 
                                 std::mem::drop(shell);
-                                match grab.grab_type() {
-                                    GrabType::Touch => {
-                                        seat.get_touch().unwrap().set_grab(state, grab, serial)
-                                    }
-                                    GrabType::Pointer => seat.get_pointer().unwrap().set_grab(
+                                if grab.is_touch_grab() {
+                                    seat.get_touch().unwrap().set_grab(state, grab, serial);
+                                } else {
+                                    seat.get_pointer().unwrap().set_grab(
                                         state,
                                         grab,
                                         serial,
                                         Focus::Clear,
-                                    ),
-                                    GrabType::TabletTool => seat
-                                        .tablet_seat()
-                                        .get_tool(grab.tool().unwrap())
-                                        .unwrap()
-                                        .set_grab(
-                                            state,
-                                            grab,
-                                            InputTime::now(),
-                                            serial,
-                                            Focus::Clear,
-                                        ),
+                                    );
                                 }
                             }
                         }
@@ -772,8 +753,6 @@ impl Program for ZoomProgram {
                                 let level = output_state_ref.level;
                                 std::mem::drop(output_state_ref);
 
-                                let mut theme = state.common.theme.clone();
-                                theme.transparent = theme.cosmic().frosted_system_interface;
                                 let grab = MenuGrab::new(
                                     start_data,
                                     &seat,
@@ -787,18 +766,7 @@ impl Program for ZoomProgram {
                                                     .accessibility_zoom
                                                     .increment = val;
                                                 state.common.update_config();
-                                                if let Err(err) =
-                                                    state.common.config.cosmic_helper.set(
-                                                        "accessibility_zoom",
-                                                        state
-                                                            .common
-                                                            .config
-                                                            .cosmic_conf
-                                                            .accessibility_zoom,
-                                                    )
-                                                {
-                                                    error!(?err, "Failed to update zoom config");
-                                                }
+                                                // TODO: Write config
                                             });
                                         })
                                     }),
@@ -806,31 +774,19 @@ impl Program for ZoomProgram {
                                     MenuAlignment::PREFER_CENTERED,
                                     Some(level.min(4.)),
                                     state.common.event_loop_handle.clone(),
-                                    theme,
+                                    state.common.theme.clone(),
                                 );
 
                                 std::mem::drop(shell);
-                                match grab.grab_type() {
-                                    GrabType::Touch => {
-                                        seat.get_touch().unwrap().set_grab(state, grab, serial)
-                                    }
-                                    GrabType::Pointer => seat.get_pointer().unwrap().set_grab(
+                                if grab.is_touch_grab() {
+                                    seat.get_touch().unwrap().set_grab(state, grab, serial);
+                                } else {
+                                    seat.get_pointer().unwrap().set_grab(
                                         state,
                                         grab,
                                         serial,
                                         Focus::Clear,
-                                    ),
-                                    GrabType::TabletTool => seat
-                                        .tablet_seat()
-                                        .get_tool(grab.tool().unwrap())
-                                        .unwrap()
-                                        .set_grab(
-                                            state,
-                                            grab,
-                                            InputTime::now(),
-                                            serial,
-                                            Focus::Clear,
-                                        ),
+                                    );
                                 }
                             }
                         }
@@ -865,7 +821,7 @@ impl Program for ZoomProgram {
                 if let Some(pos) = self.increments.iter().position(|val| *val == increment) {
                     self.increment_idx = pos;
                 } else {
-                    let mut increments = ZoomConfig::ZOOM_INCREMENT_PRESETS.to_vec();
+                    let mut increments = vec![25, 50, 100, 150, 200];
                     if !increments.contains(&increment) {
                         increments.push(increment);
                     }
@@ -920,14 +876,14 @@ impl PointerTarget<State> for ZoomFocusTarget {
         }
     }
 
-    fn button(&self, seat: &Seat<State>, data: &mut State, event: &PointerButtonEvent) {
+    fn button(&self, seat: &Seat<State>, data: &mut State, event: &ButtonEvent) {
         match self {
             ZoomFocusTarget::Main(elem) => PointerTarget::button(elem, seat, data, event),
             ZoomFocusTarget::Menu(elem) => PointerTarget::button(elem, seat, data, event),
         }
     }
 
-    fn axis(&self, seat: &Seat<State>, data: &mut State, frame: PointerAxisFrame) {
+    fn axis(&self, seat: &Seat<State>, data: &mut State, frame: AxisFrame) {
         match self {
             ZoomFocusTarget::Main(elem) => PointerTarget::axis(elem, seat, data, frame),
             ZoomFocusTarget::Menu(elem) => PointerTarget::axis(elem, seat, data, frame),
@@ -1060,7 +1016,7 @@ impl PointerTarget<State> for ZoomFocusTarget {
         }
     }
 
-    fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial, time: InputTime) {
+    fn leave(&self, seat: &Seat<State>, data: &mut State, serial: Serial, time: u32) {
         match self {
             ZoomFocusTarget::Main(elem) => PointerTarget::leave(elem, seat, data, serial, time),
             ZoomFocusTarget::Menu(elem) => PointerTarget::leave(elem, seat, data, serial, time),
@@ -1069,197 +1025,58 @@ impl PointerTarget<State> for ZoomFocusTarget {
 }
 
 impl TouchTarget<State> for ZoomFocusTarget {
-    fn down(&self, seat: &Seat<State>, data: &mut State, event: &TouchDownEvent) {
+    fn down(&self, seat: &Seat<State>, data: &mut State, event: &DownEvent, seq: Serial) {
         match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::down(elem, seat, data, event),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::down(elem, seat, data, event),
+            ZoomFocusTarget::Main(elem) => TouchTarget::down(elem, seat, data, event, seq),
+            ZoomFocusTarget::Menu(elem) => TouchTarget::down(elem, seat, data, event, seq),
         }
     }
 
-    fn up(&self, seat: &Seat<State>, data: &mut State, event: &TouchUpEvent) {
+    fn up(&self, seat: &Seat<State>, data: &mut State, event: &UpEvent, seq: Serial) {
         match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::up(elem, seat, data, event),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::up(elem, seat, data, event),
+            ZoomFocusTarget::Main(elem) => TouchTarget::up(elem, seat, data, event, seq),
+            ZoomFocusTarget::Menu(elem) => TouchTarget::up(elem, seat, data, event, seq),
         }
     }
 
-    fn motion(&self, seat: &Seat<State>, data: &mut State, event: &TouchMotionEvent) {
+    fn motion(&self, seat: &Seat<State>, data: &mut State, event: &TouchMotionEvent, seq: Serial) {
         match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::motion(elem, seat, data, event),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::motion(elem, seat, data, event),
+            ZoomFocusTarget::Main(elem) => TouchTarget::motion(elem, seat, data, event, seq),
+            ZoomFocusTarget::Menu(elem) => TouchTarget::motion(elem, seat, data, event, seq),
         }
     }
 
-    fn frame(&self, seat: &Seat<State>, data: &mut State, frame: FrameMarker) {
+    fn frame(&self, seat: &Seat<State>, data: &mut State, seq: Serial) {
         match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::frame(elem, seat, data, frame),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::frame(elem, seat, data, frame),
+            ZoomFocusTarget::Main(elem) => TouchTarget::frame(elem, seat, data, seq),
+            ZoomFocusTarget::Menu(elem) => TouchTarget::frame(elem, seat, data, seq),
         }
     }
 
-    fn cancel(&self, seat: &Seat<State>, data: &mut State, frame: FrameMarker) {
+    fn cancel(&self, seat: &Seat<State>, data: &mut State, seq: Serial) {
         match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::cancel(elem, seat, data, frame),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::cancel(elem, seat, data, frame),
+            ZoomFocusTarget::Main(elem) => TouchTarget::cancel(elem, seat, data, seq),
+            ZoomFocusTarget::Menu(elem) => TouchTarget::cancel(elem, seat, data, seq),
         }
     }
 
-    fn shape(&self, seat: &Seat<State>, data: &mut State, event: &ShapeEvent) {
+    fn shape(&self, seat: &Seat<State>, data: &mut State, event: &ShapeEvent, seq: Serial) {
         match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::shape(elem, seat, data, event),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::shape(elem, seat, data, event),
+            ZoomFocusTarget::Main(elem) => TouchTarget::shape(elem, seat, data, event, seq),
+            ZoomFocusTarget::Menu(elem) => TouchTarget::shape(elem, seat, data, event, seq),
         }
     }
 
-    fn orientation(&self, seat: &Seat<State>, data: &mut State, event: &OrientationEvent) {
-        match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::orientation(elem, seat, data, event),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::orientation(elem, seat, data, event),
-        }
-    }
-
-    fn last_frame(&self, seat: &Seat<State>, data: &mut State) -> Option<FrameMarker> {
-        match self {
-            ZoomFocusTarget::Main(elem) => TouchTarget::last_frame(elem, seat, data),
-            ZoomFocusTarget::Menu(elem) => TouchTarget::last_frame(elem, seat, data),
-        }
-    }
-}
-
-impl TabletToolTarget<State> for ZoomFocusTarget {
-    fn proximity_in(
+    fn orientation(
         &self,
         seat: &Seat<State>,
         data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        tablet: &Tablet,
-        serial: Serial,
+        event: &OrientationEvent,
+        seq: Serial,
     ) {
         match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::proximity_in(elem, seat, data, tool_descriptor, tablet, serial)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::proximity_in(elem, seat, data, tool_descriptor, tablet, serial)
-            }
-        }
-    }
-
-    fn proximity_out(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-    ) {
-        match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::proximity_out(elem, seat, data, tool_descriptor)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::proximity_out(elem, seat, data, tool_descriptor)
-            }
-        }
-    }
-
-    fn down(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &TabletDownEvent,
-    ) {
-        match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::down(elem, seat, data, tool_descriptor, event)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::down(elem, seat, data, tool_descriptor, event)
-            }
-        }
-    }
-
-    fn up(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &TabletUpEvent,
-    ) {
-        match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::up(elem, seat, data, tool_descriptor, event)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::up(elem, seat, data, tool_descriptor, event)
-            }
-        }
-    }
-
-    fn motion(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &TabletMotionEvent,
-    ) {
-        match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::motion(elem, seat, data, tool_descriptor, event)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::motion(elem, seat, data, tool_descriptor, event)
-            }
-        }
-    }
-
-    fn axis(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        frame: TabletAxisFrame,
-    ) {
-        match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::axis(elem, seat, data, tool_descriptor, frame)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::axis(elem, seat, data, tool_descriptor, frame)
-            }
-        }
-    }
-
-    fn button(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        event: &TabletButtonEvent,
-    ) {
-        match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::button(elem, seat, data, tool_descriptor, event)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::button(elem, seat, data, tool_descriptor, event)
-            }
-        }
-    }
-
-    fn frame(
-        &self,
-        seat: &Seat<State>,
-        data: &mut State,
-        tool_descriptor: &TabletToolDescriptor,
-        time: InputTime,
-    ) {
-        match self {
-            ZoomFocusTarget::Main(elem) => {
-                TabletToolTarget::frame(elem, seat, data, tool_descriptor, time)
-            }
-            ZoomFocusTarget::Menu(elem) => {
-                TabletToolTarget::frame(elem, seat, data, tool_descriptor, time)
-            }
+            ZoomFocusTarget::Main(elem) => TouchTarget::orientation(elem, seat, data, event, seq),
+            ZoomFocusTarget::Menu(elem) => TouchTarget::orientation(elem, seat, data, event, seq),
         }
     }
 }

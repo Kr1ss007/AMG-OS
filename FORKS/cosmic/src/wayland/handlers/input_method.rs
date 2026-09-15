@@ -2,6 +2,7 @@
 
 use crate::state::State;
 use smithay::{
+    delegate_input_method_manager,
     desktop::{PopupKind, PopupManager, space::SpaceElement},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::Rectangle,
@@ -11,11 +12,6 @@ use tracing::warn;
 
 impl InputMethodHandler for State {
     fn new_popup(&mut self, surface: PopupSurface) {
-        self.common
-            .shell
-            .read()
-            .unconstrain_popup(&PopupKind::from(surface.clone()));
-
         if let Err(err) = self.common.popups.track_popup(PopupKind::from(surface)) {
             warn!("Failed to track popup: {}", err);
         }
@@ -36,7 +32,7 @@ impl InputMethodHandler for State {
             .unwrap_or_default()
     }
 
-    fn popup_repositioned(&mut self, popup: PopupSurface) {
-        self.common.shell.read().unconstrain_popup(&popup.into());
-    }
+    fn popup_repositioned(&mut self, _: PopupSurface) {}
 }
+
+delegate_input_method_manager!(State);

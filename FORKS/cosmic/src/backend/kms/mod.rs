@@ -4,15 +4,11 @@ use crate::{
     config::{CompOutputConfig, ScreenFilter},
     shell::Shell,
     state::BackendData,
-    utils::{env::dev_var, global::remove_global_with_timer, prelude::*},
-    wayland::protocols::{drm::WlDrmState, output_power::OutputPowerState},
+    utils::{env::dev_var, prelude::*},
 };
 
-use anyhow::{self, Context, Result};
-use calloop::{
-    LoopSignal,
-    timer::{TimeoutAction, Timer},
-};
+use anyhow::{Context, Result};
+use calloop::LoopSignal;
 use cosmic_comp_config::output::comp::{AdaptiveSync, OutputState};
 use indexmap::IndexMap;
 use render::gles::GbmGlowBackend;
@@ -32,36 +28,31 @@ use smithay::{
         calloop::{Dispatcher, EventLoop, LoopHandle},
         drm::{
             Device as _,
-            control::{
-                Device as _,
-                connector::{Interface, State as ConnectorState},
-                crtc,
-            },
+            control::{Device as _, connector::Interface, crtc},
         },
         input::{self, Libinput},
-        wayland_protocols::wp::linux_dmabuf::zv1::server::zwp_linux_dmabuf_feedback_v1::TrancheFlags,
         wayland_server::{Client, DisplayHandle},
     },
     utils::{Clock, DevPath, Monotonic, Size},
     wayland::{
-        dmabuf::{DmabufFeedbackBuilder, DmabufGlobal},
+        dmabuf::DmabufGlobal,
         drm_syncobj::{DrmSyncobjState, supports_syncobj_eventfd},
         relative_pointer::RelativePointerManagerState,
     },
 };
 use surface::GbmDrmOutput;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
     sync::{Arc, RwLock, atomic::AtomicBool},
-    time::Duration,
 };
 
 mod device;
 mod drm_helpers;
 pub mod render;
+mod socket;
 mod surface;
 use device::*;
 pub(crate) use surface::Surface;
@@ -82,7 +73,6 @@ pub struct KmsState {
     libinput: Libinput,
 
     pub syncobj_state: Option<DrmSyncobjState>,
-    pub dmabuf_global: Option<DmabufGlobal>,
 }
 
 pub struct KmsGuard<'a> {
@@ -140,7 +130,6 @@ pub fn init_backend(
         libinput: libinput_context,
 
         syncobj_state: None,
-        dmabuf_global: None,
     });
 
     // manually add already present gpus
@@ -152,10 +141,9 @@ pub fn init_backend(
         }
     }
 
-    if let Err(err) = state.select_primary_gpu(dh) {
+    if let Err(err) = state.backend.kms().select_primary_gpu(dh) {
         warn!("Failed to determine primary gpu: {}", err);
     }
-    state.update_default_feedback();
 
     if let Err(err) = state.refresh_output_config() {
         info!(
@@ -180,13 +168,9 @@ pub fn init_backend(
         }
     }
 
-    if state.common.with_xwayland {
-        // start x11
-        let primary = *state.backend.kms().primary_node.read().unwrap();
-        state.launch_xwayland(primary);
-    } else {
-        state.notify_ready();
-    }
+    // start x11
+    let primary = *state.backend.kms().primary_node.read().unwrap();
+    state.launch_xwayland(primary);
 
     Ok(())
 }
@@ -212,10 +196,10 @@ fn init_libinput(
                 .input_devices
                 .insert(device.name().into(), device.clone());
         } else if let InputEvent::DeviceRemoved { device } = &event {
-            state.backend.kms().input_devices.remove(&*device.name());
+            state.backend.kms().input_devices.remove(device.name());
         }
 
-        state.process_input_event(event, crate::input::InputBackendId::Normal);
+        state.process_input_event(event);
 
         for output in state.common.shell.read().outputs() {
             state.backend.kms().schedule_render(output);
@@ -242,30 +226,25 @@ fn determine_primary_gpu(
     drm_devices: &IndexMap<DrmNode, Device>,
     seat: String,
 ) -> Result<Option<DrmNode>> {
-    if let Some(device) = dev_var("COSMIC_RENDER_DEVICE")
-        && let Some(node) = drm_devices.values().find_map(|dev| {
+    if let Some(device) = dev_var("COSMIC_RENDER_DEVICE") {
+        if let Some(node) = drm_devices.values().find_map(|dev| {
             device
                 .matches(&dev.inner.render_node)
                 .then_some(dev.inner.render_node)
-        })
-    {
-        return Ok(Some(node));
+        }) {
+            return Ok(Some(node));
+        }
     }
 
     // try to find builtin display
     for dev in drm_devices.values() {
-        let drm = dev.drm.device();
-        let res_handles = drm.resource_handles()?;
-        let connectors = res_handles.connectors();
-        if connectors.iter().any(|conn| {
-            let Ok(conn_info) = drm.get_connector(*conn, false) else {
-                return false;
-            };
-            let i = conn_info.interface();
-            conn_info.state() == ConnectorState::Connected
-                && (i == Interface::EmbeddedDisplayPort
-                    || i == Interface::LVDS
-                    || i == Interface::DSI)
+        if dev.inner.surfaces.values().any(|s| {
+            if let Ok(conn_info) = dev.drm.device().get_connector(s.connector, false) {
+                let i = conn_info.interface();
+                i == Interface::EmbeddedDisplayPort || i == Interface::LVDS || i == Interface::DSI
+            } else {
+                false
+            }
         }) {
             return Ok(Some(dev.inner.render_node));
         }
@@ -273,12 +252,13 @@ fn determine_primary_gpu(
 
     // else try to find the boot gpu
     let boot = determine_boot_gpu(seat);
-    if let Some(boot) = boot
-        && drm_devices
+    if let Some(boot) = boot {
+        if drm_devices
             .values()
             .any(|dev| dev.inner.render_node == boot)
-    {
-        return Ok(Some(boot));
+        {
+            return Ok(Some(boot));
+        }
     }
 
     // else just take the first
@@ -333,13 +313,12 @@ fn init_udev(
 
                 {
                     let backend = state.backend.kms();
-                    if matches!(event, UdevEvent::Added { .. } | UdevEvent::Removed { .. }) {
-                        if backend.primary_node.read().unwrap().is_none()
-                            && let Err(err) = state.select_primary_gpu(&dh)
-                        {
+                    if matches!(event, UdevEvent::Added { .. } | UdevEvent::Removed { .. })
+                        && backend.primary_node.read().unwrap().is_none()
+                    {
+                        if let Err(err) = state.backend.kms().select_primary_gpu(&dh) {
                             warn!("Failed to determine a new primary gpu: {}", err);
                         }
-                        state.update_default_feedback();
                     }
                 }
 
@@ -376,14 +355,6 @@ impl State {
     ) {
         let backend = self.backend.kms();
 
-        // recreate all graphics contexts
-        backend
-            .clear_used_devices()
-            .expect("This should never fail");
-        if let Err(err) = backend.refresh_used_devices() {
-            warn!(?err, "Failed to re-create graphics contexts");
-        }
-
         // resume input
         if let Err(err) = backend.libinput.resume() {
             error!(?err, "Failed to resume libinput context.");
@@ -392,7 +363,6 @@ impl State {
         for device in backend.drm_devices.values_mut() {
             if let Err(err) = device.drm.lock().activate(true) {
                 error!(?err, "Failed to resume drm device");
-                continue;
             }
             if let Some(lease_state) = device.inner.leasing_global.as_mut() {
                 lease_state.resume::<State>();
@@ -413,37 +383,15 @@ impl State {
                         continue;
                     }
                 };
-                let dh = state.common.display_handle.clone();
-
                 if state.backend.kms().drm_devices.contains_key(&drm_node) {
                     match state.device_changed(dev) {
                         Ok(outputs) => added.extend(outputs),
                         Err(err) => {
-                            error!(
-                                ?err,
-                                "Failed to update drm device {}. Re-opening",
-                                path.display(),
-                            );
-                            match state.reopen_device(dev, path, &dh) {
-                                Ok(outputs) => added.extend(outputs),
-                                Err(err) => {
-                                    error!(
-                                        ?err,
-                                        "Failed to re-open drm device {}. Device lost",
-                                        path.display(),
-                                    );
-                                    if let Err(err) = state.device_removed(dev, &dh) {
-                                        error!(
-                                            ?err,
-                                            "Failed to close drm device {}.",
-                                            path.display(),
-                                        );
-                                    };
-                                }
-                            }
+                            error!(?err, "Failed to update drm device {}.", path.display(),)
                         }
                     }
                 } else {
+                    let dh = state.common.display_handle.clone();
                     match state.device_added(dev, path, &dh) {
                         Ok(outputs) => added.extend(outputs),
                         Err(err) => error!(?err, "Failed to add drm device {}.", path.display(),),
@@ -463,8 +411,6 @@ impl State {
                     }
                 }
             }
-
-            OutputPowerState::refresh(state);
             state.common.refresh();
         });
         loop_signal.wakeup();
@@ -483,118 +429,51 @@ impl State {
             device.drm.pause();
         }
     }
+}
 
+impl KmsState {
     fn select_primary_gpu(&mut self, dh: &DisplayHandle) -> Result<()> {
         // We don't have to check the allow/blocklist here,
         // as any disallowed devices won't be in `self.drm_devices`.
 
-        let kms = self.backend.kms();
-        let mut primary_node = kms.primary_node.write().unwrap();
+        let mut primary_node = self.primary_node.write().unwrap();
         let _ = primary_node.take(); // if we error don't leave an old node in place
-        *primary_node = determine_primary_gpu(&kms.drm_devices, kms.session.seat())?;
+        *primary_node = determine_primary_gpu(&self.drm_devices, self.session.seat())?;
 
         if let Some(node) = *primary_node {
             info!("Using {} as primary gpu for rendering.", node);
-            kms.software_renderer.take();
-
-            // setup minimal feedback. We will update it in `update_default_feedback`
-            let primary_formats = kms
-                .drm_devices
-                .values()
-                .find(|dev| dev.inner.render_node == node)
-                .unwrap()
-                .texture_formats
-                .clone();
-            let feedback = DmabufFeedbackBuilder::new(node.dev_id(), primary_formats.clone())
-                .build()
-                .unwrap();
-
-            if let Some(global) = kms.dmabuf_global.as_ref() {
-                self.common
-                    .dmabuf_state
-                    .set_default_feedback(global, &feedback);
-            } else {
-                let dmabuf_global = self
-                    .common
-                    .dmabuf_state
-                    .create_global_with_default_feedback::<State>(dh, &feedback);
-                kms.dmabuf_global = Some(dmabuf_global);
-            };
-
-            let device_path = node
-                .dev_path_with_type(NodeType::Render)
-                .or_else(|| node.dev_path())
-                .ok_or(anyhow::anyhow!(
-                    "Could not determine path for gpu node: {}",
-                    node
-                ))?;
-
-            if let Some(drm) = self.common.wl_drm_state.as_mut() {
-                drm.update_device(device_path, primary_formats);
-            } else {
-                self.common.wl_drm_state = Some(WlDrmState::new::<State>(
-                    dh,
-                    device_path,
-                    primary_formats,
-                    kms.dmabuf_global.as_ref().unwrap(),
-                ));
-            }
-        } else if kms.software_renderer.is_none() {
+            self.software_renderer.take();
+        } else if self.software_renderer.is_none() {
             info!("Failed to find a suitable gpu, using software renderingr");
-            kms.software_renderer = match software_renderer() {
+            self.software_renderer = match software_renderer() {
                 Ok(renderer) => Some(renderer),
                 Err(err) => {
                     error!(?err, "Failed to initialize software EGL renderer.");
                     None
                 }
             };
-
-            if let Some(drm) = self.common.wl_drm_state.take() {
-                remove_global_with_timer(dh, &self.common.event_loop_handle, drm.global().clone());
-            }
-            if let Some(global) = kms.dmabuf_global.take() {
-                self.common
-                    .dmabuf_state
-                    .disable_global::<State>(dh, &global);
-                let source = Timer::from_duration(Duration::from_secs(5));
-                let res =
-                    self.common
-                        .event_loop_handle
-                        .insert_source(source, move |_, _, state| {
-                            state
-                                .common
-                                .dmabuf_state
-                                .destroy_global::<State>(&state.common.display_handle, global);
-                            TimeoutAction::Drop
-                        });
-                if let Err(err) = res {
-                    tracing::error!(
-                        "failed to insert timer source to destroy output global: {}",
-                        err
-                    );
-                }
-            }
         }
 
         if !crate::utils::env::bool_var("COSMIC_DISABLE_SYNCOBJ").unwrap_or(false) {
             if let Some(primary_node) = primary_node
                 .as_ref()
                 .and_then(|node| node.node_with_type(NodeType::Primary).and_then(|x| x.ok()))
-                && let Some(device) = kms.drm_devices.get(&primary_node)
             {
-                let import_device = device.drm.device().device_fd().clone();
-                if supports_syncobj_eventfd(&import_device) {
-                    if let Some(state) = kms.syncobj_state.as_mut() {
-                        state.update_device(import_device);
-                    } else {
-                        let syncobj_state = DrmSyncobjState::new::<State>(dh, import_device);
-                        kms.syncobj_state = Some(syncobj_state);
+                if let Some(device) = self.drm_devices.get(&primary_node) {
+                    let import_device = device.drm.device().device_fd().clone();
+                    if supports_syncobj_eventfd(&import_device) {
+                        if let Some(state) = self.syncobj_state.as_mut() {
+                            state.update_device(import_device);
+                        } else {
+                            let syncobj_state = DrmSyncobjState::new::<State>(dh, import_device);
+                            self.syncobj_state = Some(syncobj_state);
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
                 }
             }
 
-            if let Some(old_state) = kms.syncobj_state.take() {
+            if let Some(old_state) = self.syncobj_state.take() {
                 dh.remove_global::<State>(old_state.into_global());
             }
         }
@@ -602,111 +481,84 @@ impl State {
         Ok(())
     }
 
-    fn update_default_feedback(&mut self) {
-        let kms = self.backend.kms();
-        let primary_node = kms.primary_node.read().unwrap();
-        if let Some(primary_node) = *primary_node {
-            let primary_formats = kms
-                .drm_devices
-                .values()
-                .find(|dev| dev.inner.render_node == primary_node)
-                .unwrap()
-                .texture_formats
-                .clone();
-
-            let mut feedback =
-                DmabufFeedbackBuilder::new(primary_node.dev_id(), primary_formats.clone());
-            for dev in kms
-                .drm_devices
-                .values()
-                .filter(|dev| dev.inner.render_node != primary_node)
-            {
-                feedback = feedback.add_preference_tranche(
-                    dev.inner.render_node.dev_id(),
-                    TrancheFlags::Sampling,
-                    dev.texture_formats.iter().cloned(),
-                    6..=6,
-                );
-            }
-
-            let default_feedback = feedback.build().unwrap();
-            self.common.dmabuf_state.set_default_feedback(
-                kms.dmabuf_global
-                    .as_ref()
-                    .expect("Primary node but no dmabuf global?"),
-                &default_feedback,
-            );
-        }
-    }
-}
-
-impl KmsState {
     pub fn switch_vt(&mut self, num: i32) -> Result<(), anyhow::Error> {
         self.session.change_vt(num).map_err(Into::into)
     }
 
     pub fn dmabuf_imported(
         &mut self,
-        client: Option<Client>,
-        _global: &DmabufGlobal,
+        _client: Option<Client>,
+        global: &DmabufGlobal,
         dmabuf: Dmabuf,
     ) -> Result<DrmNode> {
-        let device_node = dmabuf
-            .node()
-            .unwrap_or_else(|| self.primary_node.read().unwrap().unwrap());
-        let mut device = self
+        let (expected_node, mut other_nodes) = self
             .drm_devices
             .values_mut()
-            .find(|dev| dev.inner.render_node == device_node)
-            .ok_or(anyhow::anyhow!(
-                "Unable to find device for node: {}",
-                device_node
-            ))?;
+            .partition::<Vec<_>, _>(|device| {
+                device
+                    .socket
+                    .as_ref()
+                    .map(|s| &s.dmabuf_global == global)
+                    .unwrap_or(false)
+            });
+        other_nodes.retain(|device| device.socket.is_some());
 
-        // If device advertised to client doesn't support format/modifier, select
-        // first device that does. This is needed for image-copy from
-        // output/toplevel on a different node.
-        if dmabuf.node().is_none() && !device.texture_formats.contains(&dmabuf.format()) {
-            device = self
-                .drm_devices
-                .values_mut()
-                .find(|device| device.texture_formats.contains(&dmabuf.format()))
-                .context("Dmabuf cannot be imported on any gpu")?;
-        }
+        let mut last_err = anyhow::anyhow!("Dmabuf cannot be imported on any gpu");
+        for device in expected_node.into_iter().chain(other_nodes.into_iter()) {
+            let mut _egl = None;
+            let egl_display = if let Some(egl_display) = device
+                .inner
+                .egl
+                .as_ref()
+                .map(|internals| &internals.display)
+            {
+                egl_display
+            } else {
+                _egl =
+                    Some(init_egl(&device.inner.gbm).context("Failed to initialize egl context")?);
+                &_egl.as_ref().unwrap().display
+            };
 
-        let new_client = if let Some(client) = client {
-            let new = device.inner.active_clients.insert(client.id());
-            device.inner.update_egl(
-                self.primary_node.read().unwrap().as_ref(),
-                self.api.as_mut(),
-            )? && new
-        } else {
-            false
-        };
-
-        let egl = device
-            .inner
-            .egl
-            .as_ref()
-            .context("EGL initialization Error")?;
-        egl.display
-            .create_image_from_dmabuf(&dmabuf)
-            .inspect(|image| unsafe {
-                smithay::backend::egl::ffi::egl::DestroyImageKHR(
-                    **egl.display.get_display_handle(),
-                    *image,
+            if !egl_display
+                .dmabuf_texture_formats()
+                .contains(&dmabuf.format())
+            {
+                trace!(
+                    "Skipping import of dmabuf on {:?}: unsupported format",
+                    device.inner.render_node
                 );
-            })
-            .context("Failed to create EGLImage from dmabuf")?;
+                continue;
+            }
 
-        let node = device.inner.render_node;
-        dmabuf.set_node(node);
+            let result = egl_display
+                .create_image_from_dmabuf(&dmabuf)
+                .map(|image| {
+                    unsafe {
+                        smithay::backend::egl::ffi::egl::DestroyImageKHR(
+                            **egl_display.get_display_handle(),
+                            image,
+                        );
+                    };
+                    device.inner.render_node
+                })
+                .map_err(Into::into);
 
-        if new_client {
-            self.refresh_used_devices()?;
+            match result {
+                Ok(node) => {
+                    dmabuf.set_node(node); // so the MultiRenderer knows what node to use
+                    return Ok(node);
+                }
+                Err(err) => {
+                    trace!(
+                        ?err,
+                        "Failed to import dmabuf on {:?}", device.inner.render_node
+                    );
+                    last_err = err;
+                }
+            }
         }
 
-        Ok(node)
+        Err(last_err)
     }
 
     pub fn schedule_render(&mut self, output: &Output) {
@@ -740,25 +592,6 @@ impl KmsState {
         // that might not be available for any filters we currently expose.
         //
         // But we might conditionally fail here in the future.
-        Ok(())
-    }
-
-    fn clear_used_devices(&mut self) -> Result<()> {
-        let primary_node = self.primary_node.read().unwrap();
-        let empty_devices = HashSet::new();
-
-        for device in self.drm_devices.values_mut() {
-            if device.inner.egl.take().is_some() {
-                self.api.as_mut().remove_node(&device.inner.render_node);
-                device.inner.update_surface_nodes(&empty_devices, &[])?;
-            }
-        }
-
-        // trigger re-evaluation... urgh
-        if let Some(primary_node) = primary_node.as_ref() {
-            let _ = self.api.single_renderer(primary_node);
-        }
-
         Ok(())
     }
 
@@ -921,7 +754,7 @@ impl KmsGuard<'_> {
                 .crtcs()
                 .iter()
                 .filter(|crtc| {
-                    !device.inner.surfaces.contains_key(crtc)
+                    device.inner.surfaces.get(crtc).is_none()
                     // TODO: We can't do this. See https://github.com/Smithay/smithay/pull/1820
                     //.is_some_and(|surface| surface.output.is_enabled())
                 })
@@ -973,23 +806,11 @@ impl KmsGuard<'_> {
 
             // first drop old surfaces
             if !test_only {
-                let mut disabled_crtcs = Vec::new();
-                device.inner.surfaces.retain(|crtc, surface| {
-                    if outputs
-                        .iter()
-                        .any(|o| !o.is_enabled() && surface.output == *o)
-                    {
-                        disabled_crtcs.push(*crtc);
-                        false
-                    } else {
-                        true
-                    }
-                });
-
-                if let Err(err) =
-                    drm_helpers::disable_crtcs(device.drm.device_mut(), &disabled_crtcs)
-                {
-                    warn!("Failed to disable crtcs for disabled outputs: {err}");
+                for output in outputs.iter().filter(|o| !o.is_enabled()) {
+                    device
+                        .inner
+                        .surfaces
+                        .retain(|_, surface| surface.output != *output);
                 }
             }
 
@@ -1054,36 +875,35 @@ impl KmsGuard<'_> {
 
                 if !test_only {
                     if !surface.is_active() {
-                        let mut planes = drm
-                            .device()
-                            .planes(crtc)
-                            .with_context(|| "Failed to enumerate planes")?;
-
-                        let driver = drm.device().get_driver().ok();
-
-                        // QUIRK: Using an overlay plane on a nvidia card breaks the display controller (wtf...)
-                        if driver.as_ref().is_some_and(|driver| {
-                            driver
-                                .name()
-                                .to_string_lossy()
-                                .to_lowercase()
-                                .contains("nvidia")
-                        }) {
-                            planes.overlay = vec![];
-                        }
-                        // QUIRK: Cursor planes on evdi sometimes don't disappear correctly.
-                        // TODO: Debug and figure out, as they can be a nice improvement.
-                        if driver.as_ref().is_some_and(|driver| {
-                            driver
-                                .name()
-                                .to_string_lossy()
-                                .to_lowercase()
-                                .contains("evdi")
-                        }) {
-                            planes.cursor = vec![];
-                        }
-
                         let compositor: GbmDrmOutput = {
+                            let mut planes = drm
+                                .device()
+                                .planes(crtc)
+                                .with_context(|| "Failed to enumerate planes")?;
+                            let driver = drm.device().get_driver().ok();
+
+                            // QUIRK: Using an overlay plane on a nvidia card breaks the display controller (wtf...)
+                            if driver.as_ref().is_some_and(|driver| {
+                                driver
+                                    .name()
+                                    .to_string_lossy()
+                                    .to_lowercase()
+                                    .contains("nvidia")
+                            }) {
+                                planes.overlay = vec![];
+                            }
+                            // QUIRK: Cursor planes on evdi sometimes don't disappear correctly.
+                            // TODO: Debug and figure out, as they can be a nice improvement.
+                            if driver.as_ref().is_some_and(|driver| {
+                                driver
+                                    .name()
+                                    .to_string_lossy()
+                                    .to_lowercase()
+                                    .contains("evdi")
+                            }) {
+                                planes.cursor = vec![];
+                            }
+
                             let mut renderer = self
                                 .api
                                 .single_renderer(&device.inner.render_node)
@@ -1099,7 +919,6 @@ impl KmsGuard<'_> {
                                     output,
                                     CursorMode::All,
                                     None,
-                                    None,
                                 )
                                 .with_context(|| "Failed to render outputs")?;
 
@@ -1112,7 +931,7 @@ impl KmsGuard<'_> {
                                     *mode,
                                     &[conn],
                                     &surface.output,
-                                    Some(planes.clone()),
+                                    Some(planes),
                                     &mut renderer,
                                     &elements,
                                 )
@@ -1123,15 +942,15 @@ impl KmsGuard<'_> {
                             compositor
                         };
 
-                        if let Some(bpc) = output_config.0.max_bpc
-                            && let Err(err) = drm_helpers::set_max_bpc(drm.device(), conn, bpc)
-                        {
-                            warn!(
-                                ?bpc,
-                                ?err,
-                                "Failed to set max_bpc on connector: {}",
-                                surface.output.name()
-                            );
+                        if let Some(bpc) = output_config.0.max_bpc {
+                            if let Err(err) = drm_helpers::set_max_bpc(drm.device(), conn, bpc) {
+                                warn!(
+                                    ?bpc,
+                                    ?err,
+                                    "Failed to set max_bpc on connector: {}",
+                                    surface.output.name()
+                                );
+                            }
                         }
 
                         let vrr = output_config.0.vrr;
@@ -1147,17 +966,16 @@ impl KmsGuard<'_> {
                                     .unwrap(),
                             )
                             .ok();
-
-                        let primary_formats = compositor_ref.surface().plane_info().formats.clone();
-                        let overlay_formats = planes
-                            .overlay
-                            .iter()
-                            .flat_map(|p| p.formats.iter().cloned())
-                            .collect::<FormatSet>();
                         surface.resume(
                             compositor,
-                            primary_formats,
-                            Some(overlay_formats).filter(|f| !f.indexset().is_empty()),
+                            compositor_ref.surface().plane_info().formats.clone(),
+                            compositor_ref
+                                .surface()
+                                .planes()
+                                .overlay
+                                .iter()
+                                .flat_map(|p| p.formats.iter().cloned())
+                                .collect::<FormatSet>(),
                         );
 
                         surface.output.set_adaptive_sync_support(vrr_support);
@@ -1210,7 +1028,6 @@ impl KmsGuard<'_> {
                                 output,
                                 CursorMode::All,
                                 None,
-                                None,
                             )
                             .with_context(|| "Failed to render outputs")?;
 
@@ -1254,7 +1071,6 @@ impl KmsGuard<'_> {
                         now,
                         output,
                         CursorMode::All,
-                        None,
                         None,
                     )
                     .with_context(|| "Failed to render outputs")?;

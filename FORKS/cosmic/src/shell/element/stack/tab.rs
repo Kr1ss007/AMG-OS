@@ -3,19 +3,20 @@ use cosmic::{
     font::Font,
     iced::{
         Background,
-        core::{
-            Border, Clipboard, Color, Length, Rectangle, Shell, Size, alignment, event,
-            layout::{Layout, Limits, Node},
-            mouse, overlay, renderer,
-            text::{Ellipsize, EllipsizeHeightLimit, Shaping, Wrapping},
-            touch,
-            widget::{Id, Widget, operation::Operation, tree::Tree},
-        },
-        widget::{self, container::draw_background, rule::FillMode, scrollable::AbsoluteOffset},
+        widget::{self, container::draw_background, rule::FillMode},
     },
+    iced_core::{
+        Border, Clipboard, Color, Length, Rectangle, Shell, Size, alignment, event,
+        layout::{Layout, Limits, Node},
+        mouse, overlay, renderer,
+        widget::{Id, Widget, operation::Operation, tree::Tree},
+    },
+    iced_widget::scrollable::AbsoluteOffset,
     theme,
-    widget::{Icon, icon::from_name, text},
+    widget::{Icon, icon::from_name},
 };
+
+use super::tab_text::tab_text;
 
 #[derive(Clone, Copy)]
 pub(super) enum TabRuleTheme {
@@ -29,19 +30,19 @@ impl From<TabRuleTheme> for theme::Rule {
         match theme {
             TabRuleTheme::ActiveActivated => Self::custom(|theme| widget::rule::Style {
                 color: theme.cosmic().accent_color().into(),
-                snap: true,
+                width: 4,
                 radius: 0.0.into(),
                 fill_mode: FillMode::Full,
             }),
             TabRuleTheme::ActiveDeactivated => Self::custom(|theme| widget::rule::Style {
                 color: theme.cosmic().palette.neutral_5.into(),
-                snap: true,
+                width: 4,
                 radius: 0.0.into(),
                 fill_mode: FillMode::Full,
             }),
             TabRuleTheme::Default => Self::custom(|theme| widget::rule::Style {
                 color: theme.cosmic().palette.neutral_5.into(),
-                snap: true,
+                width: 4,
                 radius: 8.0.into(),
                 fill_mode: FillMode::Padded(4),
             }),
@@ -61,23 +62,11 @@ impl From<TabBackgroundTheme> for theme::Container<'_> {
         match background_theme {
             TabBackgroundTheme::ActiveActivated => {
                 Self::custom(move |theme| widget::container::Style {
-                    snap: true,
                     icon_color: Some(Color::from(theme.cosmic().accent_text_color())),
                     text_color: Some(Color::from(theme.cosmic().accent_text_color())),
-                    background: Some(Background::Color({
-                        let mut color = theme
-                            .cosmic()
-                            .primary(theme.cosmic().frosted_windows)
-                            .component
-                            .selected;
-                        if theme.cosmic().frosted_windows {
-                            color.alpha = theme
-                                .cosmic()
-                                .alpha_map
-                                .blurred_alpha(theme.cosmic().frosted);
-                        }
-                        color.into()
-                    })),
+                    background: Some(Background::Color(
+                        theme.cosmic().primary.component.selected.into(),
+                    )),
                     border: Border {
                         radius: 0.0.into(),
                         width: 0.0,
@@ -88,23 +77,11 @@ impl From<TabBackgroundTheme> for theme::Container<'_> {
             }
             TabBackgroundTheme::ActiveDeactivated => {
                 Self::custom(move |theme| widget::container::Style {
-                    snap: true,
                     icon_color: None,
                     text_color: None,
-                    background: Some(Background::Color({
-                        let mut color = theme
-                            .cosmic()
-                            .primary(theme.cosmic().frosted_windows)
-                            .component
-                            .base;
-                        if theme.cosmic().frosted_windows {
-                            color.alpha = theme
-                                .cosmic()
-                                .alpha_map
-                                .blurred_alpha(theme.cosmic().frosted);
-                        }
-                        color.into()
-                    })),
+                    background: Some(Background::Color(
+                        theme.cosmic().primary.component.base.into(),
+                    )),
                     border: Border {
                         radius: 0.0.into(),
                         width: 0.0,
@@ -209,7 +186,7 @@ impl<Message: TabMessage + 'static> Tab<Message> {
         }
 
         let items = vec![
-            widget::rule::vertical(4).class(self.rule_theme).into(),
+            widget::vertical_rule(4).class(self.rule_theme).into(),
             self.app_icon
                 .clone()
                 .apply(widget::container)
@@ -217,12 +194,9 @@ impl<Message: TabMessage + 'static> Tab<Message> {
                 .padding([2, 4])
                 .center_y(Length::Fill)
                 .into(),
-            text::body(self.title)
+            tab_text(self.title, self.active)
                 .font(self.font)
-                .wrapping(Wrapping::None)
-                .shaping(Shaping::Advanced)
-                .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
-                .align_y(alignment::Vertical::Center)
+                .font_size(14.0)
                 .height(Length::Fill)
                 .width(Length::Fill)
                 .into(),
@@ -288,7 +262,7 @@ where
         Size::new(Length::Fill, Length::Fill)
     }
 
-    fn layout(&mut self, tree: &mut Tree, renderer: &cosmic::Renderer, limits: &Limits) -> Node {
+    fn layout(&self, tree: &mut Tree, renderer: &cosmic::Renderer, limits: &Limits) -> Node {
         let min_size = Size {
             height: TAB_HEIGHT as f32,
             width: if self.active {
@@ -311,8 +285,8 @@ where
             .min_height(size.height)
             .width(size.width)
             .height(size.height);
-        cosmic::iced::core::layout::flex::resolve(
-            cosmic::iced::core::layout::flex::Axis::Horizontal,
+        cosmic::iced_core::layout::flex::resolve(
+            cosmic::iced_core::layout::flex::Axis::Horizontal,
             renderer,
             &limits,
             Length::Fill,
@@ -321,88 +295,95 @@ where
             8.,
             cosmic::iced::Alignment::Center,
             if size.width >= CLOSE_BREAKPOINT as f32 {
-                &mut self.elements
+                &self.elements
             } else if size.width >= TEXT_BREAKPOINT as f32 {
-                &mut self.elements[0..3]
+                &self.elements[0..3]
             } else {
-                &mut self.elements[0..2]
+                &self.elements[0..2]
             },
             &mut tree.children,
         )
     }
 
     fn operate(
-        &mut self,
+        &self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &cosmic::Renderer,
         operation: &mut dyn Operation<()>,
     ) {
-        operation.container(None, layout.bounds());
-        operation.traverse(&mut |operation| {
+        operation.container(None, layout.bounds(), &mut |operation| {
             self.elements
-                .iter_mut()
+                .iter()
                 .zip(&mut tree.children)
                 .zip(layout.children())
                 .for_each(|((child, state), layout)| {
                     child
-                        .as_widget_mut()
+                        .as_widget()
                         .operate(state, layout, renderer, operation);
                 });
         });
     }
 
-    fn update(
+    fn on_event(
         &mut self,
         tree: &mut Tree,
-        event: &event::Event,
+        event: event::Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &cosmic::Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) {
-        for ((child, state), layout) in self
+    ) -> event::Status {
+        let status = self
             .elements
             .iter_mut()
             .zip(&mut tree.children)
             .zip(layout.children())
-        {
-            child.as_widget_mut().update(
-                state, event, layout, cursor, renderer, clipboard, shell, viewport,
-            );
-        }
+            .map(|((child, state), layout)| {
+                child.as_widget_mut().on_event(
+                    state,
+                    event.clone(),
+                    layout,
+                    cursor,
+                    renderer,
+                    clipboard,
+                    shell,
+                    viewport,
+                )
+            })
+            .fold(event::Status::Ignored, event::Status::merge);
 
-        if !shell.is_event_captured() && cursor.is_over(layout.bounds()) {
+        if status == event::Status::Ignored && cursor.is_over(layout.bounds()) {
             if matches!(
                 event,
                 event::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-                    | event::Event::Touch(touch::Event::FingerPressed { .. })
-            ) && let Some(message) = self.press_message.clone()
-            {
-                shell.publish(message);
-                shell.capture_event();
-                return;
+            ) {
+                if let Some(message) = self.press_message.clone() {
+                    shell.publish(message);
+                    return event::Status::Captured;
+                }
             }
             if matches!(
                 event,
                 event::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
-            ) && let Some(message) = self.right_click_message.clone()
-            {
-                shell.publish(message);
-                shell.capture_event();
-                return;
+            ) {
+                if let Some(message) = self.right_click_message.clone() {
+                    shell.publish(message);
+                    return event::Status::Captured;
+                }
             }
             if matches!(
                 event,
                 event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-                    | event::Event::Touch(touch::Event::FingerLifted { .. })
             ) {
                 shell.publish(Message::activate(self.idx));
-                shell.capture_event();
+                return event::Status::Captured;
             }
         }
+
+        status
     }
 
     fn mouse_interaction(
@@ -466,18 +447,10 @@ where
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'b>,
+        layout: Layout<'_>,
         renderer: &cosmic::Renderer,
-        viewport: &Rectangle,
         translation: cosmic::iced::Vector,
     ) -> Option<overlay::Element<'b, Message, cosmic::Theme, cosmic::Renderer>> {
-        overlay::from_children(
-            &mut self.elements,
-            tree,
-            layout,
-            renderer,
-            viewport,
-            translation,
-        )
+        overlay::from_children(&mut self.elements, tree, layout, renderer, translation)
     }
 }

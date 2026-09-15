@@ -1,13 +1,5 @@
 use crate::{
-    backend::render::{
-        element::AsGlowRenderer,
-        wayland::{SurfaceRenderElement, push_render_elements_from_surface_tree},
-    },
-    shell::focus::target::PointerFocusTarget,
-    wayland::handlers::{
-        background_effect::ComputedBlurRegionCachedState, compositor::frame_time_filter_fn,
-        corner_radius::surface_corners,
-    },
+    shell::focus::target::PointerFocusTarget, wayland::protocols::corner_radius::CacheableCorners,
 };
 use std::{
     borrow::Cow,
@@ -19,17 +11,16 @@ use std::{
 };
 
 use smithay::{
-    backend::{
-        drm::DrmNode,
-        input::InputTime,
-        renderer::{
-            ImportAll, Renderer, buffer_has_alpha,
-            element::{Kind, RenderElementStates, surface::KindEvaluation},
-            utils::RendererSurfaceStateUserData,
+    backend::renderer::{
+        ImportAll, Renderer,
+        element::{
+            AsRenderElements, Kind, RenderElementStates,
+            surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
+            utils::select_dmabuf_feedback,
         },
     },
     desktop::{
-        PopupManager, WeakWindow, Window, WindowSurface, WindowSurfaceType, space::SpaceElement,
+        PopupManager, Window, WindowSurface, WindowSurfaceType, space::SpaceElement,
         utils::OutputPresentationFeedback,
     },
     input::{
@@ -52,12 +43,7 @@ use smithay::{
         IsAlive, Logical, Physical, Point, Rectangle, Scale, Serial, Size, user_data::UserDataMap,
     },
     wayland::{
-        alpha_modifier::AlphaModifierSurfaceCachedState,
-        compositor::{
-            SubsurfaceCachedState, SurfaceData, TraversalAction, get_parent, with_states,
-            with_surface_tree_downward,
-        },
-        dmabuf::get_dmabuf,
+        compositor::{SurfaceData, TraversalAction, with_states, with_surface_tree_downward},
         seat::WaylandFocus,
         shell::xdg::{
             SurfaceCachedState, ToplevelCachedState, ToplevelSurface, XdgToplevelSurfaceData,
@@ -76,88 +62,8 @@ use crate::{
     },
 };
 
-/// The [`DrmNode`] the surface's currently committed buffer was allocated on, if it is a dmabuf.
-fn buffer_node(data: &SurfaceData) -> Option<DrmNode> {
-    let surface_state = data.data_map.get::<RendererSurfaceStateUserData>()?;
-    let surface_state = surface_state.lock().unwrap();
-    surface_state
-        .buffer()
-        .and_then(|buffer| get_dmabuf(buffer).ok())
-        .and_then(|dmabuf| dmabuf.node())
-}
-
-fn is_likely_translucent(alpha: f32, data: &SurfaceData) -> bool {
-    if alpha < 1.0 {
-        return true;
-    }
-
-    let mut alpha_modifier_state = data.cached_state.get::<AlphaModifierSurfaceCachedState>();
-    let alpha_multiplier = alpha_modifier_state
-        .current()
-        .multiplier_f32()
-        .unwrap_or(1.0);
-    if alpha_multiplier < 1.0 {
-        return true;
-    }
-
-    let Some(surface_state) = data.data_map.get::<RendererSurfaceStateUserData>() else {
-        return false;
-    };
-    let surface_state = surface_state.lock().unwrap();
-    if surface_state
-        .buffer()
-        .is_none_or(|buffer| !buffer_has_alpha(buffer).unwrap_or(true))
-    {
-        return false;
-    }
-
-    let mut blur_state = data.cached_state.get::<ComputedBlurRegionCachedState>();
-    blur_state
-        .current()
-        .blur_region
-        .as_ref()
-        .is_some_and(|region| !region.is_empty())
-}
-
-/// Build the [`KindEvaluation`] for a window's surface tree.
-///
-/// `scanout_node`, when set, is the scan-out target [`DrmNode`] of the output currently being
-/// rendered: only buffers allocated on that node may be promoted to overlay scan-out candidates.
-/// It is `None` for render passes that never scan out to a plane (e.g. screen-copy).
-fn scanout_kind_eval(
-    scanout_override: Option<bool>,
-    scanout_node: Option<DrmNode>,
-    alpha: f32,
-) -> KindEvaluation {
-    match (scanout_override, scanout_node) {
-        // Forced off.
-        (Some(false), _) => Kind::Unspecified.into(),
-        // No node restriction: preserve the previous behaviour exactly.
-        (Some(true), None) => Kind::ScanoutCandidate.into(),
-        (None, None) => FRAME_TIME_FILTER,
-        // Node restriction in effect: only buffers on the scan-out node may be candidates.
-        (Some(true), Some(node)) => KindEvaluation::Closure(Box::new(move |data| {
-            if buffer_node(data) == Some(node) && !is_likely_translucent(alpha, data) {
-                Kind::ScanoutCandidate
-            } else {
-                Kind::Unspecified
-            }
-        })),
-        (None, Some(node)) => KindEvaluation::Closure(Box::new(move |data| {
-            if buffer_node(data) == Some(node) && !is_likely_translucent(alpha, data) {
-                frame_time_filter_fn(data)
-            } else {
-                Kind::Unspecified
-            }
-        })),
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct CosmicSurface(pub Window);
-
-#[derive(Debug, Clone)]
-pub struct WeakCosmicSurface(pub WeakWindow);
 
 impl From<ToplevelSurface> for CosmicSurface {
     fn from(s: ToplevelSurface) -> Self {
@@ -195,12 +101,6 @@ impl PartialEq<X11Surface> for CosmicSurface {
     }
 }
 
-impl PartialEq<WeakCosmicSurface> for CosmicSurface {
-    fn eq(&self, other: &WeakCosmicSurface) -> bool {
-        other.upgrade().is_some_and(|other| other == *self)
-    }
-}
-
 #[derive(Default)]
 struct Minimized(AtomicBool);
 
@@ -230,7 +130,22 @@ impl CosmicSurface {
 
     pub fn corner_radius(&self, geometry_size: Size<i32, Logical>) -> Option<[u8; 4]> {
         self.wl_surface().and_then(|surface| {
-            with_states(&surface, |states| surface_corners(states, geometry_size))
+            with_states(&surface, |states| {
+                let mut guard = states.cached_state.get::<CacheableCorners>();
+
+                // guard against corner radius being too large, potentially disconnecting the outline
+                let half_min_dim =
+                    u8::try_from(geometry_size.w.min(geometry_size.h) / 2).unwrap_or(u8::MAX);
+
+                let corners = guard.current().0?;
+
+                Some([
+                    corners.bottom_right.min(half_min_dim),
+                    corners.top_right.min(half_min_dim),
+                    corners.bottom_left.min(half_min_dim),
+                    corners.top_left.min(half_min_dim),
+                ])
+            })
         })
     }
 
@@ -255,28 +170,6 @@ impl CosmicSurface {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(toplevel) => toplevel.with_pending_state(|state| state.size),
             WindowSurface::X11(surface) => Some(surface.geometry().size),
-        }
-    }
-
-    pub fn has_pending_changes(&self) -> bool {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(toplevel) => toplevel.has_pending_changes(),
-            WindowSurface::X11(_surface) => false,
-        }
-    }
-
-    pub fn last_server_size(&self) -> Option<Size<i32, Logical>> {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(toplevel) => with_states(toplevel.wl_surface(), |states| {
-                let attributes = states
-                    .data_map
-                    .get::<XdgToplevelSurfaceData>()
-                    .unwrap()
-                    .lock()
-                    .unwrap();
-                attributes.current_server_state().size
-            }),
-            WindowSurface::X11(_) => None,
         }
     }
 
@@ -309,8 +202,7 @@ impl CosmicSurface {
                 toplevel.with_pending_state(|state| state.size = Some(geo.size.as_logical()))
             }
             WindowSurface::X11(surface) => {
-                let _ =
-                    surface.configure_with_sync(geo.as_logical() + surface.frame_extents(), None);
+                let _ = surface.configure(geo.as_logical());
             }
         }
     }
@@ -417,7 +309,7 @@ impl CosmicSurface {
                     state.is_some_and(|state| state.states.contains(ToplevelState::Resizing))
                 }))
             }
-            WindowSurface::X11(surface) => surface.pending_configure().map(|_| true),
+            WindowSurface::X11(_surface) => None,
         }
     }
 
@@ -528,6 +420,10 @@ impl CosmicSurface {
             .store(minimized, Ordering::SeqCst);
         if let WindowSurface::X11(surface) = self.0.underlying_surface() {
             let _ = surface.set_hidden(minimized);
+            if !minimized {
+                let _ = surface.set_mapped(false);
+                let _ = surface.set_mapped(true);
+            }
         }
     }
 
@@ -545,9 +441,6 @@ impl CosmicSurface {
             .get_or_insert_threadsafe(Sticky::default)
             .0
             .store(sticky, Ordering::SeqCst);
-        if let WindowSurface::X11(surface) = self.0.underlying_surface() {
-            let _ = surface.set_sticky(sticky);
-        }
     }
 
     pub fn set_suspended(&self, suspended: bool) {
@@ -663,7 +556,7 @@ impl CosmicSurface {
                     }
                 })
             }
-            WindowSurface::X11(surface) => surface.pending_configure().is_none(),
+            WindowSurface::X11(_) => true,
         }
     }
 
@@ -727,54 +620,6 @@ impl CosmicSurface {
         }
     }
 
-    pub fn surface_offset(&self, surface: &WlSurface) -> Option<Point<i32, Logical>> {
-        match self.0.underlying_surface() {
-            WindowSurface::Wayland(toplevel) => {
-                Self::surface_tree_offset(toplevel.wl_surface(), surface)
-            }
-            WindowSurface::X11(surface_x11) => {
-                if surface_x11.wl_surface().as_ref() == Some(surface) {
-                    Some(Point::default())
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    pub fn surface_tree_offset(
-        root: &WlSurface,
-        surface: &WlSurface,
-    ) -> Option<Point<i32, Logical>> {
-        let mut offset = Point::<i32, Logical>::default();
-        let mut parent = surface.clone();
-        loop {
-            if parent == *root {
-                return Some(offset);
-            } else if let Some(s) = get_parent(&parent) {
-                offset += with_states(&parent, |states| {
-                    states
-                        .cached_state
-                        .get::<SubsurfaceCachedState>()
-                        .current()
-                        .location
-                });
-                parent = s;
-            } else {
-                // `parent` is now root of subsurface tree; `surface` is not a subsurface child of `root`
-                break;
-            }
-        }
-
-        for (popup, popup_offset) in PopupManager::popups_for_surface(root) {
-            if let Some(offset) = Self::surface_tree_offset(popup.wl_surface(), surface) {
-                return Some(popup_offset + offset);
-            }
-        }
-
-        None
-    }
-
     pub fn focus_under(
         &self,
         relative_pos: Point<f64, Logical>,
@@ -829,7 +674,7 @@ impl CosmicSurface {
         &self,
         output: &Output,
         feedback: &SurfaceDmabufFeedback,
-        _render_element_states: &RenderElementStates,
+        render_element_states: &RenderElementStates,
         primary_scan_out_output: F1,
     ) where
         F1: FnMut(&WlSurface, &SurfaceData) -> Option<Output> + Copy,
@@ -837,17 +682,17 @@ impl CosmicSurface {
         let is_fullscreen = self.is_fullscreen(false);
 
         self.0
-            .send_dmabuf_feedback(output, primary_scan_out_output, |_, data| {
-                if is_fullscreen {
-                    &feedback.primary_scanout_feedback
-                } else if frame_time_filter_fn(data) == Kind::ScanoutCandidate {
-                    feedback
-                        .overlay_scanout_feedback
-                        .as_ref()
-                        .unwrap_or(&feedback.render_feedback)
-                } else {
-                    &feedback.render_feedback
-                }
+            .send_dmabuf_feedback(output, primary_scan_out_output, |surface, _| {
+                select_dmabuf_feedback(
+                    surface,
+                    render_element_states,
+                    &feedback.render_feedback,
+                    if is_fullscreen {
+                        &feedback.primary_scanout_feedback
+                    } else {
+                        &feedback.scanout_feedback
+                    },
+                )
             })
     }
 
@@ -878,112 +723,97 @@ impl CosmicSurface {
         self.0.user_data()
     }
 
-    pub fn push_popup_render_elements<R>(
+    pub fn popup_render_elements<R, C>(
         &self,
         renderer: &mut R,
         location: Point<i32, Physical>,
         scale: Scale<f64>,
         alpha: f32,
-        scanout_node: Option<DrmNode>,
-        blur_strength: usize,
-        push: &mut dyn FnMut(SurfaceRenderElement<R>),
-    ) where
-        R: Renderer + ImportAll + AsGlowRenderer,
+    ) -> Vec<C>
+    where
+        R: Renderer + ImportAll,
         R::TextureId: Clone + 'static,
+        C: From<WaylandSurfaceRenderElement<R>>,
     {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(toplevel) => {
                 let surface = toplevel.wl_surface();
-                for (popup, popup_offset) in PopupManager::popups_for_surface(surface) {
-                    let offset = (self.0.geometry().loc + popup_offset - popup.geometry().loc)
-                        .to_physical_precise_round(scale);
-                    let mut geometry = popup.geometry().to_f64();
-                    geometry.loc += location.to_f64().to_logical(scale) + popup_offset.to_f64();
-                    let radii = with_states(popup.wl_surface(), |states| {
-                        surface_corners(states, geometry.size.to_i32_round())
-                    })
-                    .unwrap_or([0; 4]);
+                PopupManager::popups_for_surface(surface)
+                    .flat_map(move |(popup, popup_offset)| {
+                        let offset = (self.0.geometry().loc + popup_offset - popup.geometry().loc)
+                            .to_physical_precise_round(scale);
 
-                    push_render_elements_from_surface_tree(
-                        renderer,
-                        popup.wl_surface(),
-                        location + offset,
-                        geometry,
-                        scale,
-                        alpha,
-                        false,
-                        radii,
-                        None,
-                        blur_strength,
-                        scanout_kind_eval(None, scanout_node, alpha),
-                        push,
-                        None,
-                    )
-                }
+                        render_elements_from_surface_tree(
+                            renderer,
+                            popup.wl_surface(),
+                            location + offset,
+                            scale,
+                            alpha,
+                            FRAME_TIME_FILTER,
+                        )
+                    })
+                    .collect()
             }
-            WindowSurface::X11(_) => {}
+            WindowSurface::X11(_) => Vec::new(),
         }
     }
 
-    pub fn push_render_elements<R>(
+    pub fn render_elements<R, C>(
         &self,
         renderer: &mut R,
         location: Point<i32, Physical>,
         scale: Scale<f64>,
         alpha: f32,
         scanout_override: Option<bool>,
-        scanout_node: Option<DrmNode>,
-        should_clip: bool,
-        radii: [u8; 4],
-        blur_strength: usize,
-        push_above: &mut dyn FnMut(SurfaceRenderElement<R>),
-        push_below: Option<&mut dyn FnMut(SurfaceRenderElement<R>)>,
-    ) where
-        R: Renderer + ImportAll + AsGlowRenderer,
+    ) -> Vec<C>
+    where
+        R: Renderer + ImportAll,
         R::TextureId: Clone + 'static,
+        C: From<WaylandSurfaceRenderElement<R>>,
     {
-        let mut geometry = self.0.geometry().to_f64();
-        geometry.loc += location.to_f64().to_logical(scale);
-
         match self.0.underlying_surface() {
             WindowSurface::Wayland(toplevel) => {
                 let surface = toplevel.wl_surface();
 
-                push_render_elements_from_surface_tree(
+                render_elements_from_surface_tree(
                     renderer,
                     surface,
                     location,
-                    geometry,
                     scale,
                     alpha,
-                    should_clip,
-                    radii,
-                    None,
-                    blur_strength,
-                    scanout_kind_eval(scanout_override, scanout_node, alpha),
-                    push_above,
-                    push_below,
+                    scanout_override
+                        .map(|val| {
+                            if val {
+                                Kind::ScanoutCandidate
+                            } else {
+                                Kind::Unspecified
+                            }
+                            .into()
+                        })
+                        .unwrap_or(FRAME_TIME_FILTER),
                 )
             }
             WindowSurface::X11(surface) => {
                 let Some(surface) = surface.wl_surface() else {
-                    return;
+                    return Vec::new();
                 };
 
-                push_render_elements_from_surface_tree(
+                render_elements_from_surface_tree(
                     renderer,
                     &surface,
                     location,
-                    geometry,
                     scale,
                     alpha,
-                    should_clip,
-                    radii,
-                    None,
-                    blur_strength,
-                    scanout_kind_eval(scanout_override, scanout_node, alpha),
-                    push_above,
-                    push_below,
+                    scanout_override
+                        .map(|val| {
+                            if val {
+                                Kind::ScanoutCandidate
+                            } else {
+                                Kind::Unspecified
+                            }
+                            .into()
+                        })
+                        .unwrap_or(FRAME_TIME_FILTER),
                 )
             }
         }
@@ -991,16 +821,6 @@ impl CosmicSurface {
 
     pub fn x11_surface(&self) -> Option<&X11Surface> {
         self.0.x11_surface()
-    }
-
-    pub fn downgrade(&self) -> WeakCosmicSurface {
-        WeakCosmicSurface(self.0.downgrade())
-    }
-}
-
-impl WeakCosmicSurface {
-    pub fn upgrade(&self) -> Option<CosmicSurface> {
-        self.0.upgrade().map(CosmicSurface)
     }
 }
 
@@ -1085,7 +905,7 @@ impl KeyboardTarget<State> for CosmicSurface {
         key: KeysymHandle<'_>,
         state: smithay::backend::input::KeyState,
         serial: smithay::utils::Serial,
-        time: InputTime,
+        time: u32,
     ) {
         match self.0.underlying_surface() {
             WindowSurface::Wayland(toplevel) => {
@@ -1127,6 +947,24 @@ impl X11Relatable for CosmicSurface {
     }
 }
 
+impl<R> AsRenderElements<R> for CosmicSurface
+where
+    R: Renderer + ImportAll,
+    R::TextureId: Clone + 'static,
+{
+    type RenderElement = WaylandSurfaceRenderElement<R>;
+
+    fn render_elements<C: From<Self::RenderElement>>(
+        &self,
+        renderer: &mut R,
+        location: Point<i32, Physical>,
+        scale: Scale<f64>,
+        alpha: f32,
+    ) -> Vec<C> {
+        self.0.render_elements(renderer, location, scale, alpha)
+    }
+}
+
 fn with_toplevel_state<T, F: FnOnce(Option<&smithay::wayland::shell::xdg::ToplevelState>) -> T>(
     toplevel: &ToplevelSurface,
     pending: bool,
@@ -1135,6 +973,6 @@ fn with_toplevel_state<T, F: FnOnce(Option<&smithay::wayland::shell::xdg::Toplev
     if pending {
         toplevel.with_pending_state(|pending| cb(Some(pending)))
     } else {
-        toplevel.with_committed_state(cb)
+        toplevel.with_committed_state(|committed| cb(committed))
     }
 }

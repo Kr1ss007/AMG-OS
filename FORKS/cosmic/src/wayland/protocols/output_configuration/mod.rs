@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
-use calloop::LoopHandle;
+use calloop::{
+    LoopHandle,
+    timer::{TimeoutAction, Timer},
+};
 use cosmic_comp_config::output::comp::AdaptiveSync;
 use cosmic_protocols::output_management::v1::server::{
     zcosmic_output_configuration_head_v1::ZcosmicOutputConfigurationHeadV1,
@@ -27,7 +30,7 @@ use smithay::{
     utils::{Logical, Physical, Point, Size, Transform},
     wayland::output::WlOutputData,
 };
-use std::{convert::TryFrom, sync::Mutex};
+use std::{convert::TryFrom, sync::Mutex, time::Duration};
 
 mod handlers;
 
@@ -425,13 +428,15 @@ where
             }
         } else {
             None
-        } && inner.enabled
-            && output
-                .current_mode()
-                .map(|c| c == output_mode)
-                .unwrap_or(false)
-        {
-            instance.obj.current_mode(mode);
+        } {
+            if inner.enabled
+                && output
+                    .current_mode()
+                    .map(|c| c == output_mode)
+                    .unwrap_or(false)
+            {
+                instance.obj.current_mode(mode);
+            }
         }
     }
 
@@ -508,11 +513,32 @@ where
         }
     }
 
-    if let Some(extension_obj) = instance.extension_obj.as_ref()
-        && inner.enabled
-        && extension_obj.version() >= zcosmic_output_head_v1::EVT_XWAYLAND_PRIMARY_SINCE
-    {
-        extension_obj.xwayland_primary(output.config().xwayland_primary as u32);
+    if let Some(extension_obj) = instance.extension_obj.as_ref() {
+        if inner.enabled
+            && extension_obj.version() >= zcosmic_output_head_v1::EVT_XWAYLAND_PRIMARY_SINCE
+        {
+            extension_obj.xwayland_primary(output.config().xwayland_primary as u32);
+        }
+    }
+}
+
+fn remove_global_with_timer<D: 'static>(
+    dh: &DisplayHandle,
+    event_loop_handle: &LoopHandle<D>,
+    id: GlobalId,
+) {
+    dh.disable_global::<D>(id.clone());
+    let source = Timer::from_duration(Duration::from_secs(5));
+    let dh = dh.clone();
+    let res = event_loop_handle.insert_source(source, move |_, _, _state| {
+        dh.remove_global::<D>(id.clone());
+        TimeoutAction::Drop
+    });
+    if let Err(err) = res {
+        tracing::error!(
+            "failed to insert timer source to destroy output global: {}",
+            err
+        );
     }
 }
 
@@ -555,4 +581,4 @@ macro_rules! delegate_output_configuration {
 }
 pub(crate) use delegate_output_configuration;
 
-use crate::utils::{global::remove_global_with_timer, prelude::OutputExt};
+use crate::utils::prelude::OutputExt;

@@ -8,22 +8,21 @@ use crate::{
         x11::X11State,
     },
     config::{CompOutputConfig, Config, ScreenFilter},
-    dbus::DBusState,
+    dbus::a11y_keyboard_monitor::A11yKeyboardMonitorState,
     input::{PointerFocusState, gestures::GestureState},
     shell::{CosmicSurface, SeatExt, Shell, grabs::SeatMoveGrabState},
     utils::prelude::OutputExt,
     wayland::{
-        handlers::{data_device::get_dnd_icon, image_copy_capture::SessionHolder},
+        handlers::{data_device::get_dnd_icon, screencopy::SessionHolder},
         protocols::{
             a11y::A11yState,
             corner_radius::CornerRadiusState,
             drm::WlDrmState,
-            image_capture_source::CosmicImageCaptureSourceState,
-            keyboard_layout::KeyboardLayoutState,
+            image_capture_source::ImageCaptureSourceState,
             output_configuration::OutputConfigurationState,
             output_power::OutputPowerState,
             overlap_notify::OverlapNotifyState,
-            session_lock_layer::SessionLockLayerState,
+            screencopy::ScreencopyState,
             toplevel_info::ToplevelInfoState,
             toplevel_management::{ManagementCapabilities, ToplevelManagementState},
             workspace::{WorkspaceState, WorkspaceUpdateGuard},
@@ -34,6 +33,7 @@ use crate::{
 use anyhow::Context;
 use calloop::RegistrationToken;
 use cosmic_comp_config::output::comp::{OutputConfig, OutputState};
+use futures_executor::ThreadPool;
 use i18n_embed::{
     DesktopLanguageRequester,
     fluent::{FluentLanguageLoader, fluent_language_loader},
@@ -74,22 +74,17 @@ use smithay::{
     utils::{Clock, Monotonic, Point},
     wayland::{
         alpha_modifier::AlphaModifierState,
-        background_effect::BackgroundEffectState,
         compositor::{CompositorClientState, CompositorState, SurfaceData},
         cursor_shape::CursorShapeManagerState,
         dmabuf::{DmabufFeedback, DmabufGlobal, DmabufState},
-        fixes::FixesState,
         fractional_scale::{FractionalScaleManagerState, with_fractional_scale},
         idle_inhibit::IdleInhibitManagerState,
         idle_notify::IdleNotifierState,
-        image_capture_source::{OutputCaptureSourceState, ToplevelCaptureSourceState},
-        image_copy_capture::ImageCopyCaptureState,
         input_method::InputMethodManagerState,
         keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitState,
         output::OutputManagerState,
         pointer_constraints::PointerConstraintsState,
         pointer_gestures::PointerGesturesState,
-        pointer_warp::PointerWarpManager,
         presentation::PresentationState,
         seat::WaylandFocus,
         security_context::{SecurityContext, SecurityContextState},
@@ -118,9 +113,9 @@ use smithay::{
     },
     xwayland::XWaylandClientData,
 };
-use tracing::warn;
+use time::UtcOffset;
 
-#[cfg(feature = "logind")]
+#[cfg(feature = "systemd")]
 use std::os::fd::OwnedFd;
 
 use std::{
@@ -128,7 +123,7 @@ use std::{
     cmp::min,
     collections::HashSet,
     ffi::OsString,
-    process::{Child, Command},
+    process::Child,
     sync::{Arc, LazyLock, Once, atomic::AtomicBool},
     time::{Duration, Instant},
 };
@@ -154,12 +149,9 @@ macro_rules! fl {
 pub struct ClientState {
     pub compositor_client_state: CompositorClientState,
     pub advertised_drm_node: Option<DrmNode>,
-    pub evlh: LoopHandle<'static, State>,
     pub evls: LoopSignal,
     pub security_context: Option<SecurityContext>,
 }
-unsafe impl Send for ClientState {}
-unsafe impl Sync for ClientState {}
 
 impl ClientState {
     /// We treat a client as "sandboxed" if it has a security context for any sandbox engine
@@ -175,23 +167,7 @@ impl ClientState {
 
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
-    fn disconnected(&self, client_id: ClientId, _reason: DisconnectReason) {
-        self.evlh.insert_idle(move |state| {
-            if let BackendData::Kms(kms_state) = &mut state.backend {
-                for device in kms_state.drm_devices.values_mut() {
-                    if device.inner.active_clients.remove(&client_id)
-                        && !device
-                            .inner
-                            .in_use(kms_state.primary_node.read().unwrap().as_ref())
-                    {
-                        if let Err(err) = kms_state.refresh_used_devices() {
-                            warn!(?err, "Failed to init devices.");
-                        };
-                        break;
-                    }
-                }
-            }
-        });
+    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {
         self.evls.wakeup();
     }
 }
@@ -226,9 +202,7 @@ pub struct State {
     pub common: Common,
     pub ready: Once,
     pub last_refresh: LastRefresh,
-    pub kiosk_command: Option<Command>,
 }
-smithay::delegate_dispatch2!(State);
 
 #[derive(Debug)]
 pub struct Common {
@@ -238,6 +212,7 @@ pub struct Common {
     pub display_handle: DisplayHandle,
     pub event_loop_handle: LoopHandle<'static, State>,
     pub event_loop_signal: LoopSignal,
+    pub async_executor: ThreadPool,
 
     pub popups: PopupManager,
     pub shell: Arc<parking_lot::RwLock<Shell>>,
@@ -245,31 +220,8 @@ pub struct Common {
     pub clock: Clock<Monotonic>,
     pub startup_done: Arc<AtomicBool>,
     pub should_stop: bool,
-    pub kiosk_exit_code: Option<i32>,
-
+    pub local_offset: time::UtcOffset,
     pub gesture_state: Option<GestureState>,
-
-    /// Active libei sender seats, keyed by their `eis` connection. Tracked so their virtual
-    /// keyboards can be re-created when the keyboard configuration changes at runtime.
-    pub ei_seats: std::collections::HashMap<
-        smithay::reexports::reis::eis::Connection,
-        smithay::backend::libei::EiInputSeat,
-    >,
-
-    /// The shared-seat [`KeyboardSource`] assigned to each libei connection, so its
-    /// `ei_keyboard` key events feed the seat keyboard with independent per-source hold
-    /// tracking (and can be released together on disconnect). Keyed by connection.
-    pub ei_keyboard_source: std::collections::HashMap<
-        smithay::reexports::reis::eis::Connection,
-        smithay::input::keyboard::KeyboardSource,
-    >,
-
-    /// Pointer buttons currently held by each libei connection, so they can be released when the
-    /// connection drops
-    pub ei_pointer_buttons: std::collections::HashMap<
-        smithay::reexports::reis::eis::Connection,
-        std::collections::HashSet<u32>,
-    >,
 
     pub kiosk_child: Option<Child>,
     pub theme: cosmic::Theme,
@@ -288,10 +240,8 @@ pub struct Common {
     pub primary_selection_state: PrimarySelectionState,
     pub ext_data_control_state: ExtDataControlState,
     pub wlr_data_control_state: WlrDataControlState,
-    pub cosmic_image_capture_source_state: CosmicImageCaptureSourceState,
-    pub output_capture_source_state: OutputCaptureSourceState,
-    pub toplevel_capture_source_state: ToplevelCaptureSourceState,
-    pub image_copy_capture_state: ImageCopyCaptureState,
+    pub image_capture_source_state: ImageCaptureSourceState,
+    pub screencopy_state: ScreencopyState,
     pub seat_state: SeatState<State>,
     pub session_lock_manager_state: SessionLockManagerState,
     pub idle_notifier_state: IdleNotifierState<State>,
@@ -299,15 +249,13 @@ pub struct Common {
     pub idle_inhibiting_surfaces: HashSet<WlSurface>,
     pub shm_state: ShmState,
     pub cursor_shape_manager_state: CursorShapeManagerState,
-    pub wl_drm_state: Option<WlDrmState<Option<DrmNode>>>,
+    pub wl_drm_state: WlDrmState<Option<DrmNode>>,
     pub viewporter_state: ViewporterState,
     pub kde_decoration_state: KdeDecorationState,
     pub xdg_decoration_state: XdgDecorationState,
     pub overlap_notify_state: OverlapNotifyState,
     pub a11y_state: A11yState,
-    pub dbus_state: DBusState,
-    pub keyboard_layout_state: KeyboardLayoutState,
-    pub background_effect_state: BackgroundEffectState,
+    pub a11y_keyboard_monitor_state: A11yKeyboardMonitorState,
 
     // shell-related wayland state
     pub xdg_shell_state: XdgShellState,
@@ -321,16 +269,12 @@ pub struct Common {
     pub xwayland_state: Option<XWaylandState>,
     pub xwayland_shell_state: XWaylandShellState,
     pub pointer_focus_state: Option<PointerFocusState>,
-    pub session_lock_layer_state: SessionLockLayerState,
 
-    #[cfg(feature = "logind")]
+    #[cfg(feature = "systemd")]
     pub inhibit_lid_fd: Option<OwnedFd>,
-
-    pub with_xwayland: bool,
 }
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
 pub enum BackendData {
     X11(X11State),
     Winit(WinitState),
@@ -349,7 +293,7 @@ pub enum LockedBackend<'a> {
 #[derive(Debug, Clone)]
 pub struct SurfaceDmabufFeedback {
     pub render_feedback: DmabufFeedback,
-    pub overlay_scanout_feedback: Option<DmabufFeedback>,
+    pub scanout_feedback: DmabufFeedback,
     pub primary_scanout_feedback: DmabufFeedback,
 }
 
@@ -615,7 +559,7 @@ impl LockedBackend<'_> {
 
         loop_handle.insert_idle(move |state| {
             state.update_inhibitor_locks();
-            state.common.update_xwayland_settings();
+            state.common.update_xwayland_scale();
             state.common.update_xwayland_primary_output();
         });
 
@@ -658,14 +602,13 @@ impl State {
         socket: OsString,
         handle: LoopHandle<'static, State>,
         signal: LoopSignal,
-        with_xwayland: bool,
-        kiosk_command: Option<Command>,
     ) -> State {
         let requested_languages = DesktopLanguageRequester::requested_languages();
         i18n_embed::select(&*LANG_LOADER, &Localizations, &requested_languages)
             .with_context(|| "Failed to load languages")
             .unwrap();
 
+        let local_offset = UtcOffset::current_local_offset().expect("No yet multithreaded");
         let clock = Clock::new();
         let config = Config::load(&handle);
         let compositor_state = CompositorState::new::<Self>(dh);
@@ -682,20 +625,15 @@ impl State {
             OverlapNotifyState::new::<Self, _>(dh, client_has_no_security_context);
         let presentation_state = PresentationState::new::<Self>(dh, clock.id() as u32);
         let primary_selection_state = PrimarySelectionState::new::<Self>(dh);
-        let cosmic_image_capture_source_state =
-            CosmicImageCaptureSourceState::new::<Self, _>(dh, client_not_sandboxed);
-        let output_capture_source_state =
-            OutputCaptureSourceState::new_with_filter::<State, _>(dh, client_not_sandboxed);
-        let toplevel_capture_source_state =
-            ToplevelCaptureSourceState::new_with_filter::<State, _>(dh, client_not_sandboxed);
-        let image_copy_capture_state =
-            ImageCopyCaptureState::new_with_filter::<Self, _>(dh, client_not_sandboxed);
+        let image_capture_source_state =
+            ImageCaptureSourceState::new::<Self, _>(dh, client_not_sandboxed);
+        let screencopy_state = ScreencopyState::new::<Self, _>(dh, client_not_sandboxed);
         let shm_state =
             ShmState::new::<Self>(dh, vec![wl_shm::Format::Xbgr8888, wl_shm::Format::Abgr8888]);
         let cursor_shape_manager_state = CursorShapeManagerState::new::<State>(dh);
         let seat_state = SeatState::<Self>::new();
         let viewporter_state = ViewporterState::new::<Self>(dh);
-        let wl_drm_state = None;
+        let wl_drm_state = WlDrmState::<Option<DrmNode>>::default();
         let kde_decoration_state = KdeDecorationState::new::<Self>(dh, Mode::Client);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(dh);
         let session_lock_manager_state =
@@ -703,7 +641,6 @@ impl State {
         XWaylandKeyboardGrabState::new::<Self>(dh);
         let xwayland_shell_state = XWaylandShellState::new::<Self>(dh);
         PointerConstraintsState::new::<Self>(dh);
-        PointerWarpManager::new::<Self>(dh);
         PointerGesturesState::new::<Self>(dh);
         TabletManagerState::new::<Self>(dh);
         SecurityContextState::new::<Self, _>(dh, client_has_no_security_context);
@@ -712,10 +649,6 @@ impl State {
         VirtualKeyboardManagerState::new::<State, _>(dh, client_not_sandboxed);
         AlphaModifierState::new::<Self>(dh);
         SinglePixelBufferState::new::<Self>(dh);
-        FixesState::new::<Self>(dh);
-        let keyboard_layout_state = KeyboardLayoutState::new::<State, _>(dh, client_not_sandboxed);
-
-        let background_effect_state = BackgroundEffectState::new::<Self>(dh);
 
         let idle_notifier_state = IdleNotifierState::<Self>::new(dh, handle.clone());
         let idle_inhibit_manager_state = IdleInhibitManagerState::new::<State>(dh);
@@ -761,12 +694,15 @@ impl State {
         );
         let workspace_state = WorkspaceState::new(dh, client_not_sandboxed);
 
+        let async_executor = ThreadPool::builder().pool_size(1).create().unwrap();
+
+        if let Err(err) = crate::dbus::init(&handle, &async_executor) {
+            tracing::warn!(?err, "Failed to initialize dbus handlers");
+        }
+
         let a11y_state = A11yState::new::<State, _>(dh, client_not_sandboxed);
 
-        let dbus_state = DBusState::init(&handle);
-
-        let session_lock_layer_state =
-            SessionLockLayerState::new::<State, _>(dh, client_not_sandboxed);
+        let a11y_keyboard_monitor_state = A11yKeyboardMonitorState::new(&async_executor);
 
         State {
             common: Common {
@@ -775,18 +711,17 @@ impl State {
                 display_handle: dh.clone(),
                 event_loop_handle: handle,
                 event_loop_signal: signal,
+                async_executor,
 
                 popups: PopupManager::default(),
                 shell,
 
+                local_offset,
+
                 clock,
                 startup_done: Arc::new(AtomicBool::new(false)),
                 should_stop: false,
-                kiosk_exit_code: None,
                 gesture_state: None,
-                ei_seats: std::collections::HashMap::new(),
-                ei_keyboard_source: std::collections::HashMap::new(),
-                ei_pointer_buttons: std::collections::HashMap::new(),
 
                 kiosk_child: None,
                 theme: cosmic::theme::system_preference(),
@@ -799,10 +734,8 @@ impl State {
                 idle_notifier_state,
                 idle_inhibit_manager_state,
                 idle_inhibiting_surfaces,
-                cosmic_image_capture_source_state,
-                output_capture_source_state,
-                toplevel_capture_source_state,
-                image_copy_capture_state,
+                image_capture_source_state,
+                screencopy_state,
                 shm_state,
                 cursor_shape_manager_state,
                 seat_state,
@@ -827,25 +760,19 @@ impl State {
                 xdg_activation_state,
                 xdg_foreign_state,
                 workspace_state,
-                background_effect_state,
                 a11y_state,
+                a11y_keyboard_monitor_state,
                 xwayland_scale: None,
                 xwayland_state: None,
                 xwayland_shell_state,
                 pointer_focus_state: None,
-                dbus_state,
-                keyboard_layout_state,
-                session_lock_layer_state,
 
-                #[cfg(feature = "logind")]
+                #[cfg(feature = "systemd")]
                 inhibit_lid_fd: None,
-
-                with_xwayland,
             },
             backend: BackendData::Unset,
             ready: Once::new(),
             last_refresh: LastRefresh::None,
-            kiosk_command,
         }
     }
 
@@ -856,14 +783,13 @@ impl State {
                 BackendData::Kms(kms_state) => *kms_state.primary_node.read().unwrap(),
                 _ => None,
             },
-            evlh: self.common.event_loop_handle.clone(),
             evls: self.common.event_loop_signal.clone(),
             security_context: None,
         }
     }
 
     fn update_inhibitor_locks(&mut self) {
-        #[cfg(feature = "logind")]
+        #[cfg(feature = "systemd")]
         {
             use smithay::backend::session::Session;
             use tracing::{debug, error, warn};
@@ -879,7 +805,7 @@ impl State {
 
             if should_handle_lid {
                 if self.common.inhibit_lid_fd.is_none() {
-                    match crate::dbus::logind::inhibit_lid(&self.common) {
+                    match crate::dbus::logind::inhibit_lid() {
                         Ok(fd) => {
                             debug!("Inhibiting lid switch");
                             self.common.inhibit_lid_fd = Some(fd);
@@ -890,8 +816,7 @@ impl State {
                                 .iter()
                                 .find(|o| o.is_internal())
                                 .cloned();
-                            let closed =
-                                crate::dbus::logind::lid_closed(&self.common).unwrap_or(false);
+                            let closed = crate::dbus::logind::lid_closed().unwrap_or(false);
 
                             if closed {
                                 backend.disable_internal_output(
@@ -974,36 +899,27 @@ impl Common {
         output: &Output,
         render_element_states: &RenderElementStates,
     ) {
-        // NOTE: Keep in sync with surface iteration in `render_input_order_internal`
-
         let shell = self.shell.read();
-        let processor = |namespace: Option<usize>| {
-            move |surface: &WlSurface, states: &SurfaceData| {
-                let primary_scanout_output = update_surface_primary_scanout_output(
-                    surface,
-                    output,
-                    states,
-                    namespace,
-                    render_element_states,
-                    primary_scanout_output_compare,
-                );
-                if let Some(output) = primary_scanout_output {
-                    with_fractional_scale(states, |fraction_scale| {
-                        // The 1.0 clamp is a workaround for Chromium
-                        // TODO: remove if Chromium ever gets fixed
-                        fraction_scale.set_preferred_scale(
-                            output.current_scale().fractional_scale().max(1.0),
-                        );
-                    });
-                }
+        let processor = |surface: &WlSurface, states: &SurfaceData| {
+            let primary_scanout_output = update_surface_primary_scanout_output(
+                surface,
+                output,
+                states,
+                render_element_states,
+                primary_scanout_output_compare,
+            );
+            if let Some(output) = primary_scanout_output {
+                with_fractional_scale(states, |fraction_scale| {
+                    fraction_scale.set_preferred_scale(output.current_scale().fractional_scale());
+                });
             }
         };
 
         // lock surface
-        if let Some(session_lock) = shell.session_lock.as_ref()
-            && let Some(lock_surface) = session_lock.surfaces.get(output)
-        {
-            with_surfaces_surface_tree(lock_surface.wl_surface(), processor(None))
+        if let Some(session_lock) = shell.session_lock.as_ref() {
+            if let Some(lock_surface) = session_lock.surfaces.get(output) {
+                with_surfaces_surface_tree(lock_surface.wl_surface(), processor)
+            }
         }
 
         for seat in shell
@@ -1015,20 +931,20 @@ impl Common {
 
             // cursor ...
             if let CursorImageStatus::Surface(wl_surface) = cursor_status {
-                with_surfaces_surface_tree(&wl_surface, processor(None));
+                with_surfaces_surface_tree(&wl_surface, processor);
             }
 
             // grabs
-            if let Some(move_grab) = seat.user_data().get::<SeatMoveGrabState>()
-                && let Some(grab_state) = move_grab.lock().unwrap().as_ref()
-            {
-                for (window, _) in grab_state.element().windows() {
-                    window.with_surfaces(processor(None));
+            if let Some(move_grab) = seat.user_data().get::<SeatMoveGrabState>() {
+                if let Some(grab_state) = move_grab.lock().unwrap().as_ref() {
+                    for (window, _) in grab_state.element().windows() {
+                        window.with_surfaces(processor);
+                    }
                 }
             }
 
             if let Some(icon) = get_dnd_icon(seat) {
-                with_surfaces_surface_tree(&icon.surface, processor(None));
+                with_surfaces_surface_tree(&icon.surface, processor);
             }
         }
 
@@ -1036,24 +952,24 @@ impl Common {
         for set in shell.workspaces.sets.values() {
             set.sticky_layer.mapped().for_each(|mapped| {
                 for (window, _) in mapped.windows() {
-                    window.with_surfaces(processor(None));
+                    window.with_surfaces(processor);
                 }
             });
         }
 
         // normal windows
         for space in shell.workspaces.spaces() {
-            if let Some(fs) = space.get_fullscreen(shell.seats.last_active()) {
-                fs.surface.with_surfaces(processor(None));
+            if let Some(window) = space.get_fullscreen() {
+                window.with_surfaces(processor);
             }
             space.mapped().for_each(|mapped| {
                 for (window, _) in mapped.windows() {
-                    window.with_surfaces(processor(None));
+                    window.with_surfaces(processor);
                 }
             });
             space.minimized_windows.iter().for_each(|m| {
                 for window in m.windows() {
-                    window.with_surfaces(processor(None));
+                    window.with_surfaces(processor);
                 }
             })
         }
@@ -1061,16 +977,15 @@ impl Common {
         // OR windows
         shell.override_redirect_windows.iter().for_each(|or| {
             if let Some(wl_surface) = or.wl_surface() {
-                with_surfaces_surface_tree(&wl_surface, processor(None));
+                with_surfaces_surface_tree(&wl_surface, processor);
             }
         });
 
         // layer surfaces
         for o in shell.outputs() {
-            let namespace = shell.workspaces.active_num(o).1;
             let map = smithay::desktop::layer_map_for_output(o);
             for layer_surface in map.layers() {
-                layer_surface.with_surfaces(processor(Some(namespace)));
+                layer_surface.with_surfaces(processor);
             }
         }
     }
@@ -1082,29 +997,29 @@ impl Common {
         render_element_states: &RenderElementStates,
         mut dmabuf_feedback: impl FnMut(DrmNode) -> Option<SurfaceDmabufFeedback>,
     ) {
-        // NOTE: Keep in sync with surface iteration in `render_input_order_internal`
-
         let shell = self.shell.read();
 
-        if let Some(session_lock) = shell.session_lock.as_ref()
-            && let Some(lock_surface) = session_lock.surfaces.get(output)
-            && let Some(feedback) =
-                advertised_node_for_surface(lock_surface.wl_surface(), &self.display_handle)
-                    .and_then(&mut dmabuf_feedback)
-        {
-            send_dmabuf_feedback_surface_tree(
-                lock_surface.wl_surface(),
-                output,
-                surface_primary_scanout_output,
-                |surface, _| {
-                    select_dmabuf_feedback(
-                        surface,
-                        render_element_states,
-                        &feedback.render_feedback,
-                        &feedback.primary_scanout_feedback,
+        if let Some(session_lock) = shell.session_lock.as_ref() {
+            if let Some(lock_surface) = session_lock.surfaces.get(output) {
+                if let Some(feedback) =
+                    advertised_node_for_surface(lock_surface.wl_surface(), &self.display_handle)
+                        .and_then(&mut dmabuf_feedback)
+                {
+                    send_dmabuf_feedback_surface_tree(
+                        lock_surface.wl_surface(),
+                        output,
+                        surface_primary_scanout_output,
+                        |surface, _| {
+                            select_dmabuf_feedback(
+                                surface,
+                                render_element_states,
+                                &feedback.render_feedback,
+                                &feedback.primary_scanout_feedback,
+                            )
+                        },
                     )
-                },
-            )
+                }
+            }
         }
 
         for seat in shell
@@ -1114,69 +1029,65 @@ impl Common {
         {
             let cursor_status = seat.cursor_image_status();
 
-            if let CursorImageStatus::Surface(wl_surface) = cursor_status
-                && let Some(feedback) =
+            if let CursorImageStatus::Surface(wl_surface) = cursor_status {
+                if let Some(feedback) =
                     advertised_node_for_surface(&wl_surface, &self.display_handle)
                         .and_then(&mut dmabuf_feedback)
-            {
-                send_dmabuf_feedback_surface_tree(
-                    &wl_surface,
-                    output,
-                    surface_primary_scanout_output,
-                    |surface, _| {
-                        select_dmabuf_feedback(
-                            surface,
-                            render_element_states,
-                            &feedback.render_feedback,
-                            feedback
-                                .overlay_scanout_feedback
-                                .as_ref()
-                                .unwrap_or(&feedback.render_feedback),
-                        )
-                    },
-                );
+                {
+                    send_dmabuf_feedback_surface_tree(
+                        &wl_surface,
+                        output,
+                        surface_primary_scanout_output,
+                        |surface, _| {
+                            select_dmabuf_feedback(
+                                surface,
+                                render_element_states,
+                                &feedback.render_feedback,
+                                &feedback.scanout_feedback,
+                            )
+                        },
+                    );
+                }
             }
 
-            if let Some(icon) = get_dnd_icon(seat)
-                && let Some(feedback) =
+            if let Some(icon) = get_dnd_icon(seat) {
+                if let Some(feedback) =
                     advertised_node_for_surface(&icon.surface, &self.display_handle)
                         .and_then(&mut dmabuf_feedback)
-            {
-                send_dmabuf_feedback_surface_tree(
-                    &icon.surface,
-                    output,
-                    surface_primary_scanout_output,
-                    |surface, _| {
-                        select_dmabuf_feedback(
-                            surface,
-                            render_element_states,
-                            &feedback.render_feedback,
-                            feedback
-                                .overlay_scanout_feedback
-                                .as_ref()
-                                .unwrap_or(&feedback.render_feedback),
-                        )
-                    },
-                );
+                {
+                    send_dmabuf_feedback_surface_tree(
+                        &icon.surface,
+                        output,
+                        surface_primary_scanout_output,
+                        |surface, _| {
+                            select_dmabuf_feedback(
+                                surface,
+                                render_element_states,
+                                &feedback.render_feedback,
+                                &feedback.scanout_feedback,
+                            )
+                        },
+                    );
+                }
             }
 
-            if let Some(move_grab) = seat.user_data().get::<SeatMoveGrabState>()
-                && let Some(grab_state) = move_grab.lock().unwrap().as_ref()
-            {
-                for (window, _) in grab_state.element().windows() {
-                    if let Some(feedback) = window
-                        .wl_surface()
-                        .and_then(|wl_surface| {
-                            advertised_node_for_surface(&wl_surface, &self.display_handle)
-                        })
-                        .and_then(&mut dmabuf_feedback)
-                    {
-                        window.send_dmabuf_feedback(
-                            output,
-                            &feedback,
-                            render_element_states,
-                            surface_primary_scanout_output,
-                        );
+            if let Some(move_grab) = seat.user_data().get::<SeatMoveGrabState>() {
+                if let Some(grab_state) = move_grab.lock().unwrap().as_ref() {
+                    for (window, _) in grab_state.element().windows() {
+                        if let Some(feedback) = window
+                            .wl_surface()
+                            .and_then(|wl_surface| {
+                                advertised_node_for_surface(&wl_surface, &self.display_handle)
+                            })
+                            .and_then(&mut dmabuf_feedback)
+                        {
+                            window.send_dmabuf_feedback(
+                                output,
+                                &feedback,
+                                render_element_states,
+                                surface_primary_scanout_output,
+                            );
+                        }
                     }
                 }
             }
@@ -1209,21 +1120,21 @@ impl Common {
             });
 
         if let Some(active) = shell.active_space(output) {
-            if let Some(fs) = active.get_fullscreen(shell.seats.last_active())
-                && let Some(feedback) = fs
-                    .surface
+            if let Some(window) = active.get_fullscreen() {
+                if let Some(feedback) = window
                     .wl_surface()
                     .and_then(|wl_surface| {
                         advertised_node_for_surface(&wl_surface, &self.display_handle)
                     })
                     .and_then(&mut dmabuf_feedback)
-            {
-                fs.surface.send_dmabuf_feedback(
-                    output,
-                    &feedback,
-                    render_element_states,
-                    surface_primary_scanout_output,
-                );
+                {
+                    window.send_dmabuf_feedback(
+                        output,
+                        &feedback,
+                        render_element_states,
+                        surface_primary_scanout_output,
+                    );
+                }
             }
             active.mapped().for_each(|mapped| {
                 for (window, _) in mapped.windows() {
@@ -1246,27 +1157,25 @@ impl Common {
         }
 
         shell.override_redirect_windows.iter().for_each(|or| {
-            if let Some(wl_surface) = or.wl_surface()
-                && let Some(feedback) =
+            if let Some(wl_surface) = or.wl_surface() {
+                if let Some(feedback) =
                     advertised_node_for_surface(&wl_surface, &self.display_handle)
                         .and_then(&mut dmabuf_feedback)
-            {
-                send_dmabuf_feedback_surface_tree(
-                    &wl_surface,
-                    output,
-                    surface_primary_scanout_output,
-                    |surface, _| {
-                        select_dmabuf_feedback(
-                            surface,
-                            render_element_states,
-                            &feedback.render_feedback,
-                            feedback
-                                .overlay_scanout_feedback
-                                .as_ref()
-                                .unwrap_or(&feedback.render_feedback),
-                        )
-                    },
-                )
+                {
+                    send_dmabuf_feedback_surface_tree(
+                        &wl_surface,
+                        output,
+                        surface_primary_scanout_output,
+                        |surface, _| {
+                            select_dmabuf_feedback(
+                                surface,
+                                render_element_states,
+                                &feedback.render_feedback,
+                                &feedback.scanout_feedback,
+                            )
+                        },
+                    )
+                }
             }
         });
 
@@ -1284,10 +1193,7 @@ impl Common {
                             surface,
                             render_element_states,
                             &feedback.render_feedback,
-                            feedback
-                                .overlay_scanout_feedback
-                                .as_ref()
-                                .unwrap_or(&feedback.render_feedback),
+                            &feedback.scanout_feedback,
                         )
                     },
                 );
@@ -1297,8 +1203,6 @@ impl Common {
 
     #[profiling::function]
     pub fn send_frames(&self, output: &Output, sequence: Option<usize>) {
-        // NOTE: Keep in sync with surface iteration in `render_input_order_internal`
-
         let time = self.clock.now();
         let should_send = |surface: &WlSurface, states: &SurfaceData| {
             // Do the standard primary scanout output check. For pointer surfaces it deduplicates
@@ -1323,11 +1227,10 @@ impl Common {
 
             // If we already sent a frame callback to this surface this output refresh
             // cycle, don't send one again to prevent empty-damage commit busy loops.
-            if let Some((last_output, last_sequence)) = &*last_sent_at
-                && last_output == output
-                && *last_sequence == sequence
-            {
-                send = false;
+            if let Some((last_output, last_sequence)) = &*last_sent_at {
+                if last_output == output && *last_sequence == sequence {
+                    send = false;
+                }
             }
 
             if send {
@@ -1340,12 +1243,8 @@ impl Common {
         const THROTTLE: Option<Duration> = Some(Duration::from_millis(995));
         const SCREENCOPY_THROTTLE: Option<Duration> = Some(Duration::from_nanos(16_666_666));
 
-        fn throttle(session_holder: &impl SessionHolder, is_xwayland: bool) -> Option<Duration> {
-            if is_xwayland {
-                Some(Duration::ZERO)
-            } else if session_holder.sessions().is_empty()
-                && session_holder.cursor_sessions().is_empty()
-            {
+        fn throttle(session_holder: &impl SessionHolder) -> Option<Duration> {
+            if session_holder.sessions().is_empty() && session_holder.cursor_sessions().is_empty() {
                 THROTTLE
             } else {
                 SCREENCOPY_THROTTLE
@@ -1354,10 +1253,16 @@ impl Common {
 
         let shell = self.shell.read();
 
-        if let Some(session_lock) = shell.session_lock.as_ref()
-            && let Some(lock_surface) = session_lock.surfaces.get(output)
-        {
-            send_frames_surface_tree(lock_surface.wl_surface(), output, time, None, should_send);
+        if let Some(session_lock) = shell.session_lock.as_ref() {
+            if let Some(lock_surface) = session_lock.surfaces.get(output) {
+                send_frames_surface_tree(
+                    lock_surface.wl_surface(),
+                    output,
+                    time,
+                    None,
+                    should_send,
+                );
+            }
         }
 
         for seat in shell
@@ -1377,12 +1282,11 @@ impl Common {
                 )
             }
 
-            if let Some(move_grab) = seat.user_data().get::<SeatMoveGrabState>()
-                && let Some(grab_state) = move_grab.lock().unwrap().as_ref()
-            {
-                for (window, _) in grab_state.element().windows() {
-                    let throttle = throttle(&window, window.x11_surface().is_some());
-                    window.send_frame(output, time, throttle, should_send);
+            if let Some(move_grab) = seat.user_data().get::<SeatMoveGrabState>() {
+                if let Some(grab_state) = move_grab.lock().unwrap().as_ref() {
+                    for (window, _) in grab_state.element().windows() {
+                        window.send_frame(output, time, throttle(&window), should_send);
+                    }
                 }
             }
 
@@ -1406,28 +1310,24 @@ impl Common {
             .mapped()
             .for_each(|mapped| {
                 for (window, _) in mapped.windows() {
-                    let throttle = throttle(&window, window.x11_surface().is_some());
-                    window.send_frame(output, time, throttle, should_send);
+                    window.send_frame(output, time, throttle(&window), should_send);
                 }
             });
 
         if let Some(active) = shell.active_space(output) {
-            if let Some(fs) = active.get_fullscreen(shell.seats.last_active()) {
-                let throttle = throttle(&fs.surface, fs.surface.x11_surface().is_some());
-                fs.surface.send_frame(output, time, throttle, should_send);
+            if let Some(window) = active.get_fullscreen() {
+                window.send_frame(output, time, throttle(window), should_send);
             }
             active.mapped().for_each(|mapped| {
                 for (window, _) in mapped.windows() {
-                    let throttle = throttle(&window, window.x11_surface().is_some());
-                    window.send_frame(output, time, throttle, should_send);
+                    window.send_frame(output, time, throttle(&window), should_send);
                 }
             });
 
             // other (throttled) windows
             active.minimized_windows.iter().for_each(|m| {
                 for window in m.windows() {
-                    let throttle = throttle(&window, window.x11_surface().is_some());
-                    window.send_frame(output, time, throttle, |_, _| None);
+                    window.send_frame(output, time, throttle(&window), |_, _| None);
                 }
             });
 
@@ -1436,26 +1336,19 @@ impl Common {
                 .spaces_for_output(output)
                 .filter(|w| w.handle != active.handle)
             {
-                if let Some(fs) = space.get_fullscreen(shell.seats.last_active()) {
-                    let throttle = min(
-                        throttle(space, false),
-                        throttle(&fs.surface, fs.surface.x11_surface().is_some()),
-                    );
-                    fs.surface.send_frame(output, time, throttle, |_, _| None);
+                if let Some(window) = space.get_fullscreen() {
+                    let throttle = min(throttle(space), throttle(window));
+                    window.send_frame(output, time, throttle, |_, _| None);
                 }
                 space.mapped().for_each(|mapped| {
                     for (window, _) in mapped.windows() {
-                        let throttle = min(
-                            throttle(space, false),
-                            throttle(&window, window.x11_surface().is_some()),
-                        );
+                        let throttle = min(throttle(space), throttle(&window));
                         window.send_frame(output, time, throttle, |_, _| None);
                     }
                 });
                 space.minimized_windows.iter().for_each(|m| {
                     for window in m.windows() {
-                        let throttle = throttle(&window, window.x11_surface().is_some());
-                        window.send_frame(output, time, throttle, |_, _| None);
+                        window.send_frame(output, time, throttle(&window), |_, _| None);
                     }
                 })
             }

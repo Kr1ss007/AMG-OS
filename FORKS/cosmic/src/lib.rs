@@ -1,9 +1,3 @@
-#![allow(
-    clippy::too_many_arguments,
-    clippy::type_complexity,
-    clippy::len_without_is_empty,
-    clippy::collapsible_match
-)]
 // SPDX-License-Identifier: GPL-3.0-only
 
 use calloop::timer::{TimeoutAction, Timer};
@@ -16,7 +10,7 @@ use smithay::{
 };
 
 use anyhow::{Context, Result};
-use state::{BackendData, LastRefresh, State};
+use state::{LastRefresh, State};
 use std::{
     env,
     ffi::OsString,
@@ -26,9 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::{error, info, warn};
-use wayland::protocols::{
-    keyboard_layout::KeyboardLayoutState, overlap_notify::OverlapNotifyState,
-};
+use wayland::protocols::overlap_notify::OverlapNotifyState;
 
 use crate::wayland::handlers::compositor::client_compositor_state;
 
@@ -43,7 +35,6 @@ pub mod dbus;
 pub mod debug;
 pub mod hooks;
 pub mod input;
-pub mod libei;
 mod logger;
 pub mod session;
 pub mod shell;
@@ -77,13 +68,16 @@ impl State {
 
             // potentially tell the session we are setup now
             if let Err(err) =
-                session::run_socket(self.common.event_loop_handle.clone(), &self.common)
+                session::setup_socket(self.common.event_loop_handle.clone(), &self.common)
             {
                 warn!(?err, "Failed to setup cosmic-session communication");
             }
 
-            self.common.kiosk_child = if let Some(mut command) = self.kiosk_command.take() {
+            let mut args = env::args().skip(1);
+            self.common.kiosk_child = if let Some(exec) = args.next() {
                 // Run command in kiosk mode
+                let mut command = process::Command::new(&exec);
+                command.args(args);
                 command.envs(
                     session::get_env(&self.common).expect("WAYLAND_DISPLAY should be valid UTF-8"),
                 );
@@ -94,7 +88,7 @@ impl State {
                     })
                 };
 
-                info!("Running {:?}", command.get_program());
+                info!("Running {:?}", exec);
                 command
                     .spawn()
                     .map_err(|err| {
@@ -113,21 +107,14 @@ impl State {
 pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
     let raw_args = RawArgs::from_args();
     let mut cursor = raw_args.cursor();
-    raw_args.next_os(&mut cursor);
     let git_hash = option_env!("GIT_HASH").unwrap_or("unknown");
 
-    let mut kiosk_command = None;
-    let mut with_xwayland = true;
     // Parse the arguments
     while let Some(arg) = raw_args.next_os(&mut cursor) {
         match arg.to_str() {
             Some("--help") | Some("-h") => {
                 print_help(env!("CARGO_PKG_VERSION"), git_hash);
                 return Ok(());
-            }
-            Some("--no-xwayland") => {
-                tracing::info!("Running without Xwayland");
-                with_xwayland = false;
             }
             Some("--version") | Some("-V") => {
                 println!(
@@ -137,11 +124,7 @@ pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
                 );
                 return Ok(());
             }
-            _ => {
-                let mut cmd = process::Command::new(arg);
-                cmd.args(raw_args.remaining(&mut cursor));
-                kiosk_command = Some(cmd);
-            }
+            _ => {}
         }
     }
 
@@ -154,11 +137,6 @@ pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
     tracy_client::Client::start();
 
     utils::rlimit::increase_nofile_limit();
-    // This needs to be done before any potential program launches
-    // (e.g. Xwayland) as it handles passed file descriptors.
-    if let Err(err) = session::setup_socket() {
-        warn!("Session error: {:?}", err);
-    };
 
     // init hook globals
     hooks::HOOKS.set(hooks)
@@ -174,13 +152,7 @@ pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
         socket,
         event_loop.handle(),
         event_loop.get_signal(),
-        with_xwayland,
-        kiosk_command,
     );
-    // Set up the libei sender side before the backend spawns Xwayland.
-    let ei_sender = libei::setup_ei(&event_loop.handle());
-    state.common.dbus_state.set_ei_sender(ei_sender);
-
     // init backend
     backend::init_backend_auto(&display, &mut event_loop, &mut state)?;
 
@@ -227,17 +199,19 @@ pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
                 // Kiosk child exited with status
                 Ok(Some(exit_status)) => {
                     info!("Command exited with status {:?}", exit_status);
-                    // Stop cleanly so surface threads are joined before exit() (signal -> 1).
-                    state.common.kiosk_exit_code = Some(exit_status.code().unwrap_or(1));
-                    state.common.should_stop = true;
+                    match exit_status.code() {
+                        // Exiting with the same status as the kiosk child
+                        Some(code) => process::exit(code),
+                        // The kiosk child exited with signal, exiting with error
+                        None => process::exit(1),
+                    }
                 }
                 // Command still running
                 Ok(None) => {}
                 // Kiosk child disappeared, exiting with error
                 Err(err) => {
                     warn!(?err, "Failed to wait for command");
-                    state.common.kiosk_exit_code = Some(1);
-                    state.common.should_stop = true;
+                    process::exit(1);
                 }
             }
         }
@@ -248,31 +222,9 @@ pub fn run(hooks: crate::hooks::Hooks) -> Result<(), Box<dyn Error>> {
         let _ = child.kill();
     }
 
-    let kiosk_exit_code = state.common.kiosk_exit_code;
-
-    // Join surface threads before exit() so no thread is mid-eglCreateSync when
-    // Mesa's atexit handlers run and corrupt the heap (issue #2375). Safe here
-    // because the event loop has stopped; an unconditional join in Surface::Drop
-    // would instead deadlock against apply_config_for_outputs.
-    if let BackendData::Kms(kms) = &mut state.backend {
-        // Release master first so the surface drop path skips its blocking commit.
-        for device in kms.drm_devices.values_mut() {
-            device.drm.pause();
-        }
-        for device in kms.drm_devices.values_mut() {
-            for (_, surface) in device.inner.surfaces.drain() {
-                surface.drop_and_join();
-            }
-        }
-    }
-
     // drop eventloop & state before logger
     std::mem::drop(event_loop);
     std::mem::drop(state);
-
-    if let Some(code) = kiosk_exit_code {
-        process::exit(code);
-    }
 
     Ok(())
 }
@@ -287,9 +239,8 @@ Designed for the COSMIC™ desktop environment, cosmic-comp is a Wayland Composi
 Project home page: https://github.com/pop-os/cosmic-comp
 
 Options:
-  -h, --help          Show this message
-  --no-xwayland       Run without Xwayland
-  -v, --version       Show the version of cosmic-comp"#
+  -h, --help     Show this message
+  -v, --version  Show the version of cosmic-comp"#
     );
 }
 
@@ -362,6 +313,5 @@ fn refresh(state: &mut State) {
     state::Common::refresh_focus(state);
     OverlapNotifyState::refresh(state);
     state.common.update_x11_stacking_order();
-    KeyboardLayoutState::refresh(state);
     state.last_refresh = LastRefresh::At(Instant::now());
 }

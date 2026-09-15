@@ -4,7 +4,17 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-@namespace html "http://www.w3.org/1999/xhtml";
+@namespace html 'http://www.w3.org/1999/xhtml';
+
+:root {
+  --zen-settings-secondary-background: light-dark(#f2f4f4, color-mix(in srgb, var(--zen-colors-tertiary) 50%, #0f0f0f 50%));
+  --in-content-box-background: var(--zen-colors-tertiary) !important;
+}
+
+.main-content {
+  background: var(--zen-settings-secondary-background);
+  padding-top: 60px !important;
+}
 
 .pane-container {
   margin: auto;
@@ -30,6 +40,39 @@ html|dialog {
   animation: dialogPopin 0.2s ease-out;
 }
 
+groupbox {
+  background: light-dark(white, color-mix(in srgb, var(--zen-primary-color) 2%, #1b1b1b 98%));
+  padding-inline: unset !important;
+  padding: 20px 30px !important;
+  margin-bottom: 0 !important;
+  position: relative;
+
+  /* add shadow just to the sides */
+  box-shadow: 0 0 2px 0 rgba(0, 0, 0, 0.1);
+}
+
+.subcategory + groupbox,
+#noFxaAccount,
+#hasFxaAccount {
+  border-top-left-radius: 5px;
+  border-top-right-radius: 5px;
+  margin-top: 5px;
+}
+
+groupbox:has(+ script),
+groupbox:last-of-type,
+groupbox#pane-experimental-featureGates,
+groupbox:has(+ .subcategory) {
+  border-bottom-left-radius: 5px !important;
+  border-bottom-right-radius: 5px !important;
+  /* add shadow just to bottom */
+  box-shadow: 0 0 2px 0 rgba(0, 0, 0, 0.1);
+}
+
+.sticky-inner-container {
+  display: none !important;
+}
+
 .subcategory {
   border-top: none !important;
 }
@@ -40,13 +83,13 @@ html|dialog {
 }
 
 groupbox button {
-  border-radius: calc(5px * var(--zen-squircle-value)) !important;
+  border-radius: 5px !important;
 }
 
 groupbox button,
 groupbox menulist {
-  background-color: light-dark(#f1f1f1, #363636);
-  color: light-dark(black, white);
+  background-color: light-dark(#f1f1f1, #363636) !important;
+  color: light-dark(black, white) !important;
 }
 
 groupbox h2 {
@@ -54,11 +97,50 @@ groupbox h2 {
   font-size: 15px;
 }
 
+#categories {
+  margin: 0 !important;
+}
+
 #categories > .category {
   margin-left: 0 !important;
   min-height: 40px !important;
   position: relative;
   padding-inline: 20px !important;
+}
+
+#categories > .category[selected]::before {
+  content: '';
+  display: block;
+  height: 70%;
+  width: 5px;
+  background-color: var(--zen-primary-color);
+  position: absolute;
+  left: -3px;
+  border-radius: 5px;
+}
+
+#languagesGroup::before {
+  content: '';
+  display: block;
+  height: 1px;
+  background-color: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+  margin: 10px 0;
+  transform: translateY(-50%);
+  position: absolute;
+  top: -5px;
+  width: calc(100% - 40px);
+  margin-left: 20px;
+  left: 0;
+}
+
+#searchInput {
+  width: 100% !important;
+  border: none;
+  outline: none;
+  min-height: 40px;
+  border-radius: 10px;
+  background: light-dark(rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0.1));
+  padding-inline: 15px;
 }
 
 .textbox-search-sign {
@@ -77,12 +159,70 @@ groupbox h2 {
 
 /* Look and feel */
 
-#webAppearanceSettings {
+#webAppearanceSettings,
+#zen-theme-builder-wrapper + box {
   margin-bottom: 15px;
 }
 
+#zen-compact-mode-styles-form {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-large);
+  margin-top: 5px;
+
+  & .web-appearance-choice-image-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+
+    padding: 20px 0;
+
+    background: color-mix(in srgb, var(--zen-colors-tertiary) 50%, transparent 50%);
+  }
+}
+
+@media (-moz-bool-pref: 'zen.view.use-single-toolbar') {
+  #zen-compact-mode-styles-form {
+    display: none;
+  }
+}
+
+#zen-expand-tabbar-strat {
+  display: flex;
+  flex-direction: column;
+}
+
+#zen-expand-tabbar-strat > hbox {
+  margin-top: 10px;
+}
+
 #category-zen-looks > .category-icon {
-  list-style-image: url("chrome://browser/skin/customize.svg");
+  list-style-image: url('chrome://browser/skin/customize.svg');
+}
+
+#zenLooksAndFeelColorOptions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 108px);
+  gap: 5px;
+  margin: 10px 0 15px 0;
+}
+
+.zenLooksAndFeelColorOptionParen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 15px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--in-content-box-info-background);
+  width: fit-content;
+  margin-top: 10px;
+  border: 2px solid transparent;
+}
+
+.zenLooksAndFeelColorOptionParen[selected='true'] {
+  border-color: var(--zen-primary-color);
 }
 
 #zenLooksAndFeelGroup > html|div:last-of-type {
@@ -132,10 +272,41 @@ groupbox h2 {
   }
 }
 
+.zenLooksAndFeelColorOption {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: var(--zen-primary-color);
+  position: relative;
+  overflow: hidden;
+}
+
+.zenLooksAndFeelColorOption::before {
+  content: '';
+  display: block;
+  width: 50%;
+  height: 50%;
+  bottom: 0;
+  left: 0;
+  position: absolute;
+  background: var(--zen-colors-secondary);
+}
+
+.zenLooksAndFeelColorOption::after {
+  content: '';
+  display: block;
+  width: 50%;
+  height: 50%;
+  bottom: 0;
+  right: 0;
+  position: absolute;
+  background: var(--zen-colors-tertiary);
+}
+
 /* Workspace */
 
 #category-zen-tabs-management > .category-icon {
-  list-style-image: url("chrome://browser/skin/window.svg");
+  list-style-image: url('chrome://browser/skin/window.svg');
 }
 
 #zenTabsUnloadDelayContainer {
@@ -150,7 +321,7 @@ groupbox h2 {
 /* CKS */
 
 #category-zen-CKS > .category-icon {
-  list-style-image: url("chrome://browser/skin/quickactions.svg");
+  list-style-image: url('chrome://browser/skin/quickactions.svg');
 }
 
 .zenCKSOption-input {
@@ -206,7 +377,7 @@ groupbox h2 {
 }
 
 .zenCKSOption-unsafed {
-  color: light-dark(orange, yellow);
+  color: yellow;
   margin-left: 10px;
   margin-top: 5px;
 }
@@ -216,7 +387,7 @@ groupbox h2 {
 }
 
 .zenCKSOption-input.zenCKSOption-input-unsafed {
-  border-color: light-dark(orange, yellow);
+  border-color: yellow;
 }
 
 .zenCKSOption-input.zenCKSOption-input-valid {
@@ -284,7 +455,7 @@ groupbox h2 {
 /* THemes marketplace */
 
 #category-zen-marketplace > .category-icon {
-  list-style-image: url("chrome://mozapps/skin/extensions/category-themes.svg");
+  list-style-image: url('chrome://mozapps/skin/extensions/category-themes.svg');
 }
 
 .zenThemeMarketplaceItem {
@@ -299,43 +470,20 @@ groupbox h2 {
   align-items: center;
 }
 
-.zenThemeMarketplaceItemHomepageButton {
-  width: 30px;
-  min-width: 0;
-  position: relative;
-  cursor: pointer;
-
-  &::before {
-    content: "";
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 18px;
-    height: 18px;
-    background-image: url("chrome://browser/skin/home.svg");
-    background-repeat: no-repeat;
-    background-size: cover;
-    fill: currentColor;
-    -moz-context-properties: fill, fill-opacity;
-  }
-}
-
 .zenThemeMarketplaceItemConfigureButton {
   width: 30px;
   min-width: 0;
   position: relative;
-  cursor: pointer;
 
   &::before {
-    content: "";
+    content: '';
     position: absolute;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
     width: 15px;
     height: 15px;
-    background-image: url("chrome://global/skin/icons/settings.svg");
+    background-image: url('chrome://global/skin/icons/settings.svg');
     background-repeat: no-repeat;
     background-size: cover;
   }
@@ -387,15 +535,12 @@ groupbox h2 {
   margin: 15px 0;
 }
 
-.zenThemeMarketplaceItemUninstallButton,
-#zenThemeMarketplaceImport {
+.zenThemeMarketplaceItemUninstallButton {
   margin-left: auto;
-  cursor: pointer;
 }
 
-#zenThemeMarketplaceExport,
 #zenThemeMarketplaceCheckForUpdates {
-  cursor: pointer;
+  margin-left: auto;
 }
 
 .zenThemeMarketplaceItemPreferenceDialog {
@@ -452,7 +597,7 @@ groupbox h2 {
     font-weight: 600;
     cursor: pointer;
 
-    &[disabled="true"] {
+    &[disabled='true'] {
       opacity: 0.7;
       cursor: not-allowed;
     }
@@ -469,41 +614,16 @@ groupbox h2 {
   }
 }
 
-@media (max-width: 1320px) {
-  #zenLayoutList {
-    flex-wrap: wrap;
-  }
-}
-
 /* Disable mozilla's settings */
 
 #dataCollectionCategory,
 #dataCollectionGroup,
 #websiteAdvertisingCategory,
-#websiteAdvertisingGroup,
-#helpButton,
-#support-firefox,
-#tabGroupSuggestions,
-#setting-control-sidebarChatbotFieldset,
-#setting-control-supportFirefox,
-.mission-message,
-html|setting-group:is([data-subcategory="layout"], [groupid="support"], [groupid="browserTheme"]) {
+#websiteAdvertisingGroup {
   display: none !important;
 }
 
 .sync-engine-workspaces .checkbox-icon,
 .sync-engine-workspaces.sync-engine-image {
-  list-style-image: url("chrome://devtools/skin/images/tool-storage.svg");
-}
-
-@media -moz-pref("zen.theme.disable-lightweight") {
-  html|div[data-l10n-id="preferences-web-appearance-footer"] {
-    display: none;
-  }
-}
-
-@media -moz-pref("zen.urlbar.replace-newtab") {
-  #category-home {
-    display: none !important;
-  }
+  list-style-image: url('chrome://devtools/skin/images/tool-storage.svg');
 }

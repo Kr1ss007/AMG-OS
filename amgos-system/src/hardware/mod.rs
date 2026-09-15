@@ -143,32 +143,64 @@ pub fn read_cpu_temperature() -> Option<f32> {
 }
 
 fn detect_graphics() -> (String, Option<String>, bool) {
-    let drm_path = Path::new("/sys/class/drm");
-    let mut dgpu_name = "NVIDIA Discrete GPU (RTX 3050 Series)".to_string();
+    let pci_devices = Path::new("/sys/bus/pci/devices");
+    let mut dgpu_name = String::new();
     let mut igpu_name: Option<String> = None;
     let mut discrete_detected = false;
 
-    if drm_path.exists() {
-        if let Ok(entries) = fs::read_dir(drm_path) {
+    if pci_devices.exists() {
+        if let Ok(entries) = fs::read_dir(pci_devices) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                let device_path = path.join("device");
-                if device_path.exists() {
-                    let vendor_path = device_path.join("vendor");
-                    if let Ok(vendor) = fs::read_to_string(vendor_path) {
-                        let vendor = vendor.trim();
-                        if vendor == "0x10de" {
-                            // NVIDIA Discrete GPU
-                            discrete_detected = true;
-                            dgpu_name = "NVIDIA GeForce RTX 3050 Laptop GPU (6GB VRAM)".to_string();
-                        } else if vendor == "0x8086" {
-                            // Intel iGPU
-                            igpu_name = Some("Intel UHD Graphics (Raptor Lake)".to_string());
+                let class_path = path.join("class");
+                if let Ok(class_str) = fs::read_to_string(&class_path) {
+                    let class_trim = class_str.trim();
+                    // PCI base class 0x03 corresponds to Display Controllers (VGA: 0x0300, 3D: 0x0302, Display: 0x0380)
+                    if class_trim.starts_with("0x03") {
+                        let vendor = fs::read_to_string(path.join("vendor"))
+                            .unwrap_or_default()
+                            .trim()
+                            .to_lowercase();
+                        let device = fs::read_to_string(path.join("device"))
+                            .unwrap_or_default()
+                            .trim()
+                            .to_lowercase();
+                        let driver = fs::read_link(path.join("driver"))
+                            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                            .unwrap_or_else(|_| "unbound".to_string());
+
+                        match vendor.as_str() {
+                            "0x10de" => {
+                                discrete_detected = true;
+                                let model = if device == "0x25ac" {
+                                    "NVIDIA GeForce RTX 3050 6GB Laptop GPU"
+                                } else {
+                                    "NVIDIA Discrete GPU"
+                                };
+                                dgpu_name = format!("{model} [{vendor}:{device}] (driver: {driver})");
+                            }
+                            "0x8086" => {
+                                let model = if device == "0xa7a8" {
+                                    "Intel Raptor Lake-P UHD Graphics"
+                                } else {
+                                    "Intel Integrated Graphics"
+                                };
+                                igpu_name = Some(format!("{model} [{vendor}:{device}] (driver: {driver})"));
+                            }
+                            "0x1002" => {
+                                discrete_detected = true;
+                                dgpu_name = format!("AMD Radeon GPU [{vendor}:{device}] (driver: {driver})");
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
         }
+    }
+
+    if !discrete_detected {
+        dgpu_name = "None (iGPU only)".to_string();
     }
 
     let mux_verified = discrete_detected;

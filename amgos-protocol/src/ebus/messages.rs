@@ -157,6 +157,26 @@ impl Default for KeyboardConfig {
     }
 }
 
+/// WiFi access point information (no credentials — safe to send to Process 2)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WifiAccessPoint {
+    pub ssid: String,
+    pub signal_strength_pct: u8,
+    pub is_secured: bool,
+}
+
+/// Status of a DownloadManager job (mirrored from filer-core)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DownloadJobStatus {
+    Queued,
+    Connecting,
+    Downloading,
+    Verifying,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
 /// Events emitted by Process 1 (System Session) across e-bus
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SystemEvent {
@@ -287,6 +307,29 @@ pub enum SystemEvent {
         body: String,
         urgency: u8,
     },
+
+    /// Response to a WiFi access point scan request
+    WifiScanResults {
+        access_points: Vec<WifiAccessPoint>,
+    },
+
+    /// Download progress update from the DownloadManager
+    DownloadProgress {
+        job_id: u64,
+        url: String,
+        bytes_received: u64,
+        total_bytes: u64,   // 0 if unknown (streaming)
+        percent: f32,       // 0.0 if total unknown
+        status: DownloadJobStatus,
+    },
+
+    /// Emitted when Process 1 has applied the signed first-boot configuration
+    /// from the Setup Wizard. Signals Process 2 to dismiss wizard and show desktop.
+    FirstBootConfigApplied {
+        user_name: String,
+        locale: String,
+        ui_scale_factor: f32,
+    },
 }
 
 /// Requests dispatched by Process 2 (Desktop Session) to Process 1 across e-bus
@@ -346,4 +389,24 @@ pub enum DesktopRequest {
 
     /// Dismiss notification in Process 1
     DismissNotification { notification_id: u64 },
+
+    /// Request a WiFi access point scan (returns WifiScanResults event)
+    ScanWifiAccessPoints,
+
+    /// Request Process 1 to begin downloading a package from a URL into staging
+    DownloadPackage { url: String },
+
+    /// Cancel an in-flight package download
+    CancelDownload { job_id: u64 },
+
+    /// Submit completed Setup Wizard configuration (signed payload) to Process 1
+    FirstBootWizardComplete {
+        user_name: String,
+        locale: String,
+        ssid: Option<String>,
+        ui_scale_factor: f32,
+        telemetry_opt_in: bool,
+        config_payload: Vec<u8>,
+        hmac_signature: [u8; 32],
+    },
 }

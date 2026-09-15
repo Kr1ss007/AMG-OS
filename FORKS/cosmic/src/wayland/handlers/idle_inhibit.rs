@@ -1,5 +1,5 @@
 use smithay::{
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    delegate_idle_inhibit, reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::idle_inhibit::IdleInhibitHandler,
 };
 
@@ -16,3 +16,4 @@ impl IdleInhibitHandler for State {
         self.common.refresh_idle_inhibit();
     }
 }
+delegate_idle_inhibit!(State);

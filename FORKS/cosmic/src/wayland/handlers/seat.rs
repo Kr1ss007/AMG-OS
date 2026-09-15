@@ -6,7 +6,10 @@ use crate::{
     state::State,
     utils::prelude::SeatExt,
 };
-use smithay::input::{SeatHandler, SeatState, keyboard::LedState, pointer::CursorImageStatus};
+use smithay::{
+    delegate_cursor_shape, delegate_seat,
+    input::{SeatHandler, SeatState, keyboard::LedState, pointer::CursorImageStatus},
+};
 
 impl SeatHandler for State {
     type KeyboardFocus = KeyboardFocusTarget;
@@ -34,3 +37,6 @@ impl SeatHandler for State {
         devices.update_led_state(led_state);
     }
 }
+
+delegate_seat!(State);
+delegate_cursor_shape!(State);

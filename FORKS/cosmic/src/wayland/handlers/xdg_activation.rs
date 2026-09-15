@@ -5,8 +5,8 @@ use crate::{
     state::State,
     wayland::protocols::workspace::{State as WState, WorkspaceHandle},
 };
-use cosmic_comp_config::ActivationPolicy;
 use smithay::{
+    delegate_xdg_activation,
     input::Seat,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::xdg_activation::{
@@ -20,10 +20,6 @@ pub enum ActivationContext {
     UrgentOnly,
     Workspace(WorkspaceHandle),
 }
-
-// It may happen that we get activation-requests, while all outputs are disabled.
-// In these cases we won't be able to determine workspaces for windows and thus
-// need to handle the corresponding code paths defensively.
 
 impl XdgActivationHandler for State {
     fn activation_state(&mut self) -> &mut XdgActivationState {
@@ -56,12 +52,7 @@ impl XdgActivationHandler for State {
                 });
             let output = seat.active_output();
             let mut shell = self.common.shell.write();
-            let Some(workspace) = shell.active_space_mut(&output) else {
-                debug!(?token, "created urgent token for privileged client");
-                data.user_data
-                    .insert_if_missing(move || ActivationContext::UrgentOnly);
-                return true;
-            };
+            let workspace = shell.active_space_mut(&output).unwrap();
             let handle = workspace.handle;
             data.user_data
                 .insert_if_missing(move || ActivationContext::Workspace(handle));
@@ -95,11 +86,7 @@ impl XdgActivationHandler for State {
         if valid {
             let output = seat.active_output();
             let mut shell = self.common.shell.write();
-            let Some(workspace) = shell.active_space_mut(&output) else {
-                data.user_data
-                    .insert_if_missing(|| ActivationContext::UrgentOnly);
-                return true;
-            };
+            let workspace = shell.active_space_mut(&output).unwrap();
             let handle = workspace.handle;
             data.user_data
                 .insert_if_missing(move || ActivationContext::Workspace(handle));
@@ -129,44 +116,10 @@ impl XdgActivationHandler for State {
                 }
             }
             ActivationContext::Workspace(_) => {
-                match self.common.config.cosmic_conf.activation_policy {
-                    ActivationPolicy::Focus => {
-                        self.activate_surface(
-                            &surface,
-                            Some((ActivationKey::Wayland(surface.clone()), *context)),
-                        );
-                    }
-                    ActivationPolicy::FocusIfActiveWorkspace => {
-                        let shell = self.common.shell.write();
-
-                        let Some((target_workspace, _)) = shell.workspace_for_surface(&surface)
-                        else {
-                            return;
-                        };
-
-                        let seat = shell.seats.last_active().clone();
-                        let current_output = seat.active_output();
-                        let current_workspace = shell.active_space(&current_output).unwrap().handle;
-
-                        if target_workspace == current_workspace {
-                            std::mem::drop(shell);
-                            self.activate_surface(
-                                &surface,
-                                Some((ActivationKey::Wayland(surface.clone()), *context)),
-                            );
-                        } else {
-                            let mut workspace_guard = self.common.workspace_state.update();
-                            workspace_guard.add_workspace_state(&target_workspace, WState::Urgent);
-                        }
-                    }
-                    ActivationPolicy::Urgent => {
-                        let shell = self.common.shell.write();
-                        if let Some((workspace, _output)) = shell.workspace_for_surface(&surface) {
-                            let mut workspace_guard = self.common.workspace_state.update();
-                            workspace_guard.add_workspace_state(&workspace, WState::Urgent);
-                        }
-                    }
-                }
+                self.activate_surface(
+                    &surface,
+                    Some((ActivationKey::Wayland(surface.clone()), *context)),
+                );
             }
         }
     }
@@ -260,15 +213,15 @@ impl State {
                 None,
                 false,
             );
-        } else if let Some((workspace, _)) = shell.workspace_for_surface(surface) {
+        } else if let Some((workspace, _)) = shell.workspace_for_surface(&surface) {
             let current_workspace = shell.active_space(&current_output).unwrap();
             if workspace == current_workspace.handle {
                 let Some(target) = shell
                     .workspaces
                     .space_for_handle(&workspace)
                     .unwrap()
-                    .get_fullscreen(&seat)
-                    .map(|f| f.surface.clone())
+                    .get_fullscreen()
+                    .cloned()
                     .map(KeyboardFocusTarget::Fullscreen)
                 else {
                     return;
@@ -280,8 +233,8 @@ impl State {
                 if let Some(surface) = shell
                     .workspaces
                     .space_for_handle(&workspace)
-                    .and_then(|w| w.get_fullscreen(&seat))
-                    .map(|f| f.surface.clone())
+                    .and_then(|w| w.get_fullscreen())
+                    .cloned()
                 {
                     shell.append_focus_stack(surface, &seat)
                 }
@@ -293,3 +246,5 @@ impl State {
         };
     }
 }
+
+delegate_xdg_activation!(State);

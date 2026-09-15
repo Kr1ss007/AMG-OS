@@ -1,24 +1,21 @@
-#!/usr/bin/env bash
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+#!/bin/bash
 
 gh_bulk_delete_workflow_runs() {
-  local repo=zen-browser/$1
+  local repo=$1
 
   # Ensure the repo argument is provided
   if [[ -z "$repo" ]]; then
-    echo "Usage: gh_bulk_delete_workflow_runs <repo>"
+    echo "Usage: gh_bulk_delete_workflow_runs <owner/repo>"
     return 1
   fi
 
   # Fetch workflow runs that are cancelled, failed, or timed out
   local runs
   runs=$(gh api repos/$repo/actions/runs --paginate \
-    | jq -r '.workflow_runs[] |
-    select(.conclusion == "cancelled" or
-      .conclusion == "failure" or
-      .conclusion == "timed_out") |
+    | jq -r '.workflow_runs[] | 
+    select(.conclusion == "cancelled" or 
+      .conclusion == "failure" or 
+      .conclusion == "timed_out") | 
     .id')
 
   if [[ -z "$runs" ]]; then

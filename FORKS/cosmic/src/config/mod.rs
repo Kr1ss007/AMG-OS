@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use crate::{
-    input::InputBackendId,
     shell::Shell,
     state::{BackendData, State},
     utils::prelude::OutputExt,
@@ -14,11 +13,8 @@ use cosmic_config::{ConfigGet, CosmicConfigEntry};
 use cosmic_settings_config::window_rules::ApplicationException;
 use cosmic_settings_config::{Shortcuts, shortcuts, window_rules};
 use serde::{Deserialize, Serialize};
+use smithay::utils::{Clock, Monotonic};
 use smithay::wayland::xdg_activation::XdgActivationState;
-use smithay::{
-    backend::input::InputTime,
-    utils::{Clock, Monotonic},
-};
 pub use smithay::{
     backend::input::{self as smithay_input, KeyState},
     input::keyboard::{Keysym, ModifiersState, keysyms as KeySyms},
@@ -49,8 +45,8 @@ mod types;
 use cosmic::config::CosmicTk;
 pub use cosmic_comp_config::EdidProduct;
 use cosmic_comp_config::{
-    ActivationPolicy, AppearanceConfig, CosmicCompConfig, DecorationPreference, KeyboardConfig,
-    TileBehavior, XkbConfig, XwaylandDescaling, XwaylandEavesdropping, ZoomConfig,
+    CosmicCompConfig, KeyboardConfig, TileBehavior, XkbConfig, XwaylandDescaling,
+    XwaylandEavesdropping, ZoomConfig,
     input::{DeviceState as InputDeviceState, InputConfig, TouchpadOverride},
     output::comp::{
         OutputConfig, OutputInfo, OutputState, OutputsConfig, TransformDef, load_outputs,
@@ -184,10 +180,8 @@ impl Config {
 
         let cosmic_comp_config =
             CosmicCompConfig::get_entry(&config).unwrap_or_else(|(errs, c)| {
-                if cfg!(debug_assertions) {
-                    for err in errs {
-                        warn!(?err, "");
-                    }
+                for err in errs {
+                    error!(?err, "");
                 }
                 c
             });
@@ -195,11 +189,6 @@ impl Config {
         // Listen for updates to the toolkit config
         if let Ok(tk_config) = cosmic_config::Config::new("com.system76.CosmicTk", 1) {
             fn handle_new_toolkit_config(config: CosmicTk, state: &mut State) {
-                if cosmic::icon_theme::default() != config.icon_theme {
-                    cosmic::icon_theme::set_default(config.icon_theme.clone());
-                    state.common.update_xwayland_settings();
-                }
-
                 let mut workspace_guard = state.common.workspace_state.update();
                 state.common.shell.write().update_toolkit(
                     config,
@@ -208,32 +197,19 @@ impl Config {
                 );
             }
 
-            let config = CosmicTk::get_entry(&tk_config).unwrap_or_else(|(errs, c)| {
-                if cfg!(debug_assertions) {
-                    for err in errs {
-                        warn!(?err, "");
-                    }
-                }
-                c
-            });
-            let _ = loop_handle.insert_idle(move |state| {
-                handle_new_toolkit_config(config, state);
-            });
+            if let Ok(config) = CosmicTk::get_entry(&tk_config) {
+                let _ = loop_handle.insert_idle(move |state| {
+                    handle_new_toolkit_config(config, state);
+                });
+            }
 
             match cosmic_config::calloop::ConfigWatchSource::new(&tk_config) {
                 Ok(source) => {
                     if let Err(err) =
                         loop_handle.insert_source(source, |(config, _keys), (), state| {
-                            let config =
-                                CosmicTk::get_entry(&config).unwrap_or_else(|(errs, c)| {
-                                    if cfg!(debug_assertions) {
-                                        for err in errs {
-                                            warn!(?err, "");
-                                        }
-                                    }
-                                    c
-                                });
-                            handle_new_toolkit_config(config, state);
+                            if let Ok(config) = CosmicTk::get_entry(&config) {
+                                handle_new_toolkit_config(config, state);
+                            }
                         })
                     {
                         warn!(?err, "Failed to watch com.system76.CosmicTk config");
@@ -375,20 +351,20 @@ impl Config {
     }
 
     fn load_filter_state(path: &Option<PathBuf>) -> ScreenFilter {
-        if let Some(path) = path.as_ref()
-            && path.exists()
-        {
-            match ron::de::from_reader::<_, ScreenFilter>(
-                OpenOptions::new().read(true).open(path).unwrap(),
-            ) {
-                Ok(config) => return config,
-                Err(err) => {
-                    warn!(?err, "Failed to read screen_filter state, resetting..");
-                    if let Err(err) = std::fs::remove_file(path) {
-                        error!(?err, "Failed to remove screen_filter state.");
+        if let Some(path) = path.as_ref() {
+            if path.exists() {
+                match ron::de::from_reader::<_, ScreenFilter>(
+                    OpenOptions::new().read(true).open(path).unwrap(),
+                ) {
+                    Ok(config) => return config,
+                    Err(err) => {
+                        warn!(?err, "Failed to read screen_filter state, resetting..");
+                        if let Err(err) = std::fs::remove_file(path) {
+                            error!(?err, "Failed to remove screen_filter state.");
+                        }
                     }
-                }
-            };
+                };
+            }
         }
 
         ScreenFilter {
@@ -457,7 +433,8 @@ impl Config {
                 .collect::<Vec<_>>();
 
             let mut found_outputs = Vec::new();
-            for (name, output_config) in infos.iter().map(|o| &o.connector).zip(configs) {
+            for (name, output_config) in infos.iter().map(|o| &o.connector).zip(configs.into_iter())
+            {
                 let output = outputs.iter().find(|o| &o.name() == name).unwrap().clone();
                 let enabled = output_config.enabled.clone();
                 *output
@@ -481,7 +458,11 @@ impl Config {
             ) {
                 warn!(?err, "Failed to set new config.");
                 found_outputs.clear();
-                for (output, output_config) in outputs.clone().into_iter().zip(known_good_configs) {
+                for (output, output_config) in outputs
+                    .clone()
+                    .into_iter()
+                    .zip(known_good_configs.into_iter())
+                {
                     let enabled = output_config.enabled.clone();
                     *output
                         .user_data()
@@ -541,13 +522,7 @@ impl Config {
                     primary.config_mut().xwayland_primary = true;
                 }
             }
-            // sort by connector name for a deterministic layout independent of hotplug order
-            let mut sorted_outputs = outputs
-                .iter()
-                .filter(|o| o.mirroring().is_none())
-                .collect::<Vec<_>>();
-            sorted_outputs.sort_by_key(|o| o.name());
-            for output in sorted_outputs {
+            for output in outputs.iter().filter(|o| o.mirroring().is_none()) {
                 {
                     let mut config = output.config_mut();
                     config.position = (w, 0);
@@ -651,7 +626,7 @@ impl Config {
             &self.cosmic_conf.input_default
         };
 
-        let mut device_config = self.cosmic_conf.input_devices.get(&*device.name()).cloned();
+        let mut device_config = self.cosmic_conf.input_devices.get(device.name()).cloned();
         if is_touchpad && self.cosmic_conf.input_touchpad_override == TouchpadOverride::ForceDisable
         {
             device_config = Some({
@@ -779,12 +754,13 @@ pub fn change_modifier_state(
     const X11_KEYCODE_OFFSET: u32 = 8;
 
     let mut input = |key_state, scan_code| {
+        let time = state.common.clock.now().as_millis();
         let _ = keyboard.input(
             state,
             smithay_input::Keycode::new(scan_code + X11_KEYCODE_OFFSET),
             key_state,
             SERIAL_COUNTER.next_serial(),
-            InputTime::now(),
+            time,
             |_, _, _| smithay::input::keyboard::FilterResult::<()>::Forward,
         );
     };
@@ -827,29 +803,6 @@ fn config_changed(config: cosmic_config::Config, keys: Vec<String>, state: &mut 
                             const CAPSLOCK_SCANCODE: u32 = 58;
                             change_modifier_state(&keyboard, CAPSLOCK_SCANCODE, state);
                         }
-                    }
-                }
-                let ei_connections = state
-                    .common
-                    .ei_keyboard_source
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for conn in &ei_connections {
-                    state.release_ei_keyboard(conn);
-                    state.clear_input_source_state(&InputBackendId::Ei(conn.clone()));
-                }
-                for ei_seat in state.common.ei_seats.values() {
-                    if let Err(err) =
-                        ei_seat.add_keyboard("virtual keyboard", xkb_config_to_wl(&value))
-                    {
-                        warn!(?err, "Failed to update libei keyboard keymap");
-                    }
-                }
-                if !state.common.ei_seats.is_empty() {
-                    let seat = state.common.shell.read().seats.last_active().clone();
-                    if let Some(keyboard) = seat.get_keyboard() {
-                        state.broadcast_ei_keyboard_modifiers(&keyboard);
                     }
                 }
                 state.common.config.cosmic_conf.xkb_config = value;
@@ -926,7 +879,7 @@ fn config_changed(config: cosmic_config::Config, keys: Vec<String>, state: &mut 
                 let new = get_config::<XwaylandDescaling>(&config, "descale_xwayland");
                 if new != state.common.config.cosmic_conf.descale_xwayland {
                     state.common.config.cosmic_conf.descale_xwayland = new;
-                    state.common.update_xwayland_settings();
+                    state.common.update_xwayland_scale();
                 }
             }
             "xwayland_eavesdropping" => {
@@ -967,52 +920,6 @@ fn config_changed(config: cosmic_config::Config, keys: Vec<String>, state: &mut 
                 if new != state.common.config.cosmic_conf.accessibility_zoom {
                     state.common.config.cosmic_conf.accessibility_zoom = new;
                     state.common.update_config();
-                }
-            }
-            "appearance_settings" => {
-                let new = get_config::<AppearanceConfig>(&config, "appearance_settings");
-                if new != state.common.config.cosmic_conf.appearance_settings {
-                    state.common.config.cosmic_conf.appearance_settings = new;
-                    state.common.update_config();
-                    for output in state.common.shell.read().outputs() {
-                        state.backend.schedule_render(output);
-                    }
-                }
-            }
-            "cursor_shake_to_find" => {
-                let new = get_config::<bool>(&config, "cursor_shake_to_find");
-                state.common.config.cosmic_conf.cursor_shake_to_find = new;
-            }
-            "cursor_hide_timeout" => {
-                let new = get_config::<Option<u32>>(&config, "cursor_hide_timeout");
-                if new != state.common.config.cosmic_conf.cursor_hide_timeout {
-                    state.common.config.cosmic_conf.cursor_hide_timeout = new;
-                    let seats: Vec<_> = state.common.shell.read().seats.iter().cloned().collect();
-                    let mut needs_render = false;
-                    for seat in seats {
-                        needs_render |=
-                            crate::backend::render::cursor::notify_cursor_activity(state, &seat);
-                    }
-                    if needs_render {
-                        let outputs: Vec<_> =
-                            state.common.shell.read().outputs().cloned().collect();
-                        for output in outputs {
-                            state.backend.schedule_render(&output);
-                        }
-                    }
-                }
-            }
-            "activation_policy" => {
-                let new = get_config::<ActivationPolicy>(&config, "activation_policy");
-                if new != state.common.config.cosmic_conf.activation_policy {
-                    state.common.config.cosmic_conf.activation_policy = new;
-                }
-            }
-            "decoration_preference" => {
-                let new = get_config::<DecorationPreference>(&config, "decoration_preference");
-                if new != state.common.config.cosmic_conf.decoration_preference {
-                    state.common.config.cosmic_conf.decoration_preference = new;
-                    state.update_decorations();
                 }
             }
             _ => {}

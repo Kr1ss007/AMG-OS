@@ -4,90 +4,101 @@ on:
   workflow_dispatch:
     inputs:
       create_release:
-        description: "Create a new release for this build"
+        description: 'Create a new release for this build'
         required: false
         default: false
-        type: "boolean"
+        type: 'boolean'
       update_version:
-        description: "Update the version number"
+        description: 'Update the version number'
         required: false
         default: false
-        type: "boolean"
+        type: 'boolean'
       update_branch:
-        description: "Update branch with new version"
+        description: 'Update branch with new version'
         required: true
-        default: "release"
-        type: "choice"
+        default: 'release'
+        type: 'choice'
         options:
-          - "release"
-          - "twilight"
-      use-sccache:
-        description: "Use sccache"
-        required: true
-        type: "boolean"
-        default: false
-      disable-pgo:
-        description: "Build without PGO (skips the profile generation stages)"
-        required: false
-        type: "boolean"
-        default: false
+          - 'release'
+          - 'twilight'
   workflow_call:
     inputs:
       create_release:
-        description: "Create a new release for this build"
+        description: 'Create a new release for this build'
         required: false
         default: false
-        type: "boolean"
+        type: 'boolean'
       update_version:
-        description: "Update the version number"
+        description: 'Update the version number'
         required: false
         default: false
-        type: "boolean"
+        type: 'boolean'
       update_branch:
-        description: "Update branch with new version"
+        description: 'Update branch with new version'
         required: true
-        default: "release"
-        type: "string"
-      use-sccache:
-        description: "Use sccache"
-        required: true
-        type: "boolean"
-        default: false
-      disable-pgo:
-        description: "Build without PGO (skips the profile generation stages)"
-        required: false
-        type: "boolean"
-        default: false
+        default: 'release'
+        type: 'string'
 
 jobs:
+  debug-inputs:
+    name: Debug inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Debug
+        run: |
+          echo "create_release: ${{ inputs.create_release }}"
+          echo "update_version: ${{ inputs.update_version }}"
+          echo "update_branch: ${{ inputs.update_branch }}"
+          echo "GITHUB_REPOSITORY: ${{ github.repository }}"
+          echo "GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}"
+          echo "GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}"
+          echo "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"
+
   buildid:
     name: Generate build ID
     runs-on: ubuntu-latest
     outputs:
       buildids: ${{ steps.get.outputs.bid }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          token: ${{ secrets.DEPLOY_KEY }}
-
       - id: get
         shell: bash -xe {0}
         run: |
           bdat=`date +"%Y%m%d%I%M%S"`
           echo "bid=${bdat}" >> $GITHUB_OUTPUT
 
-      - name: Debug
+  start-self-host:
+    runs-on: ubuntu-latest
+    needs: debug-inputs
+    steps:
+      - name: Download aws-cli
         run: |
-          echo "create_release: ${{ inputs.create_release }}"
-          echo "update_version: ${{ inputs.update_version }}"
-          echo "use sccache: ${{ inputs.use-sccache }}"
-          echo "disable-pgo: ${{ inputs.disable-pgo }}"
-          echo "update_branch: ${{ inputs.update_branch }}"
-          echo "GITHUB_REPOSITORY: ${{ github.repository }}"
-          echo "GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}"
-          echo "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}"
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --update
+
+      - name: Start self-hosted runner
+        if: ${{ inputs.create_release && inputs.update_branch == 'release' }}
+        run: |
+          echo "Starting self-hosted runner"
+          echo "${{ secrets.SELF_HOSTED_RUNNER_START_SCRIPT }}" | base64 -d > start.sh
+          sudo chmod +x start.sh
+          bash ./start.sh
+
+      - name: Remove self-hosted runner script
+        if: always() && ${{ inputs.create_release && inputs.update_branch == 'release' }}
+        run: |
+          echo "Removing self-hosted runner script"
+          rm start.sh || true
+
+  check-build-is-correct:
+    runs-on: ubuntu-latest
+    needs: [debug-inputs]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.DEPLOY_KEY }}
 
       - name: Check if correct branch
         if: ${{ inputs.create_release }}
@@ -109,36 +120,12 @@ jobs:
             echo ">>> Branch matches"
           fi
 
-  start-self-host:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download aws-cli
-        if: ${{ inputs.update_branch == 'release' }}
-        run: |
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip awscliv2.zip
-          sudo ./aws/install --update
-
-      - name: Start self-hosted runner
-        if: ${{ inputs.update_branch == 'release' }}
-        run: |
-          echo "Starting self-hosted runner"
-          echo "${{ secrets.SELF_HOSTED_RUNNER_START_SCRIPT }}" | base64 -d > start.sh
-          sudo chmod +x start.sh
-          bash ./start.sh
-
-      - name: Remove self-hosted runner script
-        if: always() && ${{ inputs.update_branch == 'release' }}
-        run: |
-          echo "Removing self-hosted runner script"
-          rm start.sh || true
-
   build-data:
     permissions:
       contents: write
     name: Generate build data
     runs-on: ubuntu-latest
-    needs: buildid
+    needs: check-build-is-correct
     outputs:
       build_date: ${{ steps.data.outputs.builddate }}
       version: ${{ steps.data.outputs.version }}
@@ -151,13 +138,13 @@ jobs:
           token: ${{ secrets.DEPLOY_KEY }}
 
       - name: Setup Node.js
-        uses: useblacksmith/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: '.nvmrc'
 
       - name: Install dependencies
         run: |
-          npm ci
+          npm install
 
       - name: Setup Surfer
         run: |
@@ -195,9 +182,14 @@ jobs:
           commit_user_name: Zen Browser Robot
           commit_user_email: zen-browser-auto@users.noreply.github.com
 
+  lint:
+    uses: ./.github/workflows/code-linter.yml
+    needs: [build-data]
+    name: Lint
+
   check-release:
     runs-on: ubuntu-latest
-    needs: [build-data]
+    needs: [build-data, lint]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -206,13 +198,13 @@ jobs:
           token: ${{ secrets.DEPLOY_KEY }}
 
       - name: Setup Node.js
-        uses: useblacksmith/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: '.nvmrc'
 
       - name: Install dependencies
         run: |
-          npm ci
+          npm install
 
       - name: Setup Surfer
         run: |
@@ -248,18 +240,18 @@ jobs:
           token: ${{ secrets.DEPLOY_KEY }}
 
       - name: Setup Node.js
-        uses: useblacksmith/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: '.nvmrc'
 
       - name: Setup Git
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.email "mauro-balades@users.noreply.github.com"
+          git config --global user.name "mauro-balades"
 
       - name: Install dependencies
         run: |
-          npm ci
+          npm install
 
       - name: Load Surfer CI setup
         run: npm run surfer -- ci --brand ${{ inputs.update_branch }} --display-version ${{ needs.build-data.outputs.version }}
@@ -270,16 +262,11 @@ jobs:
       - name: Import
         run: npm run import -- --verbose
 
-      - name: Build language packs
-        run: sh scripts/download-language-packs.sh
-
       - name: Compress
         run: |
-          tar \
-            --exclude='./.git' \
-            --use-compress-program=zstd \
-            -hcf zen.source.tar.zst \
-            -C engine .
+          cd engine
+          tar --use-compress-program=zstd -hcf ../zen.source.tar.zst *
+          cd ..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -291,15 +278,13 @@ jobs:
   windows-step-1:
     name: Windows build step 1 (PGO build)
     uses: ./.github/workflows/windows-release-build.yml
-    if: ${{ !inputs.disable-pgo }}
     needs: [build-data, buildid]
     permissions:
       contents: write
     secrets: inherit
     with:
-      use-sccache: ${{ inputs.use-sccache }}
       build-version: ${{ needs.build-data.outputs.version }}
-      generate-pgo: true
+      generate-gpo: true
       profile-data-path-archive: zen-windows-profile-data-and-jarlog.zip
       release-branch: ${{ inputs.update_branch }}
       MOZ_BUILD_DATE: ${{needs.buildid.outputs.buildids}}
@@ -307,7 +292,6 @@ jobs:
   windows-step-2:
     name: Windows build step 2 (Generate profile data)
     uses: ./.github/workflows/windows-profile-build.yml
-    if: ${{ !inputs.disable-pgo }}
     permissions:
       contents: write
     secrets: inherit
@@ -323,16 +307,12 @@ jobs:
     permissions:
       contents: write
     secrets: inherit
-    # windows-step-2 is skipped when PGO is disabled, so don't inherit its skip
-    if: ${{ !failure() && !cancelled() }}
     needs: [build-data, windows-step-2, start-self-host, buildid]
     with:
       build-version: ${{ needs.build-data.outputs.version }}
-      generate-pgo: false
-      disable-pgo: ${{ inputs.disable-pgo }}
+      generate-gpo: false
       release-branch: ${{ inputs.update_branch }}
       MOZ_BUILD_DATE: ${{needs.buildid.outputs.buildids}}
-      use-sccache: ${{ inputs.use-sccache }}
 
   linux:
     name: Linux build
@@ -345,52 +325,18 @@ jobs:
       build-version: ${{ needs.build-data.outputs.version }}
       release-branch: ${{ inputs.update_branch }}
       MOZ_BUILD_DATE: ${{needs.buildid.outputs.buildids}}
-      use-sccache: ${{ inputs.use-sccache }}
-      disable-pgo: ${{ inputs.disable-pgo }}
 
-  mac-step-1:
-    name: macOS build step 1 (PGO build)
+  mac:
+    name: macOS build
     uses: ./.github/workflows/macos-release-build.yml
-    if: ${{ !inputs.disable-pgo }}
+    permissions:
+      contents: write
+    secrets: inherit
     needs: [build-data, buildid]
-    permissions:
-      contents: write
-    secrets: inherit
     with:
-      use-sccache: ${{ inputs.use-sccache }}
       build-version: ${{ needs.build-data.outputs.version }}
-      generate-pgo: true
       release-branch: ${{ inputs.update_branch }}
       MOZ_BUILD_DATE: ${{needs.buildid.outputs.buildids}}
-
-  mac-step-2:
-    name: macOS build step 2 (Generate profile data)
-    uses: ./.github/workflows/macos-profile-build.yml
-    if: ${{ !inputs.disable-pgo }}
-    permissions:
-      contents: write
-    secrets: inherit
-    needs: [mac-step-1, build-data]
-    with:
-      build-version: ${{ needs.build-data.outputs.version }}
-      release-branch: ${{ inputs.update_branch }}
-
-  mac-step-3:
-    name: macOS build step 3 (build with profile data)
-    uses: ./.github/workflows/macos-release-build.yml
-    permissions:
-      contents: write
-    secrets: inherit
-    # mac-step-2 is skipped when PGO is disabled, so don't inherit its skip
-    if: ${{ !failure() && !cancelled() }}
-    needs: [build-data, mac-step-2, start-self-host, buildid]
-    with:
-      build-version: ${{ needs.build-data.outputs.version }}
-      generate-pgo: false
-      disable-pgo: ${{ inputs.disable-pgo }}
-      release-branch: ${{ inputs.update_branch }}
-      MOZ_BUILD_DATE: ${{needs.buildid.outputs.buildids}}
-      use-sccache: ${{ inputs.use-sccache }}
 
   mac-uni:
     name: macOS build (Universal)
@@ -398,7 +344,7 @@ jobs:
     permissions:
       contents: write
     secrets: inherit
-    needs: [build-data, mac-step-3]
+    needs: [build-data, mac]
     with:
       build-version: ${{ needs.build-data.outputs.version }}
       release-branch: ${{ inputs.update_branch }}
@@ -411,7 +357,7 @@ jobs:
     strategy:
       matrix:
         arch: [x86_64, aarch64]
-    needs: [linux, build-data]
+    needs: [linux]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -420,13 +366,13 @@ jobs:
           token: ${{ secrets.DEPLOY_KEY }}
 
       - name: Setup Node.js
-        uses: useblacksmith/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version-file: ".nvmrc"
+          node-version-file: '.nvmrc'
 
       - name: Install dependencies
         run: |
-          npm ci
+          npm install
           sudo apt-get update
           sudo apt-get -y install libfuse2 desktop-file-utils appstream
 
@@ -440,25 +386,23 @@ jobs:
           set -eux
           export ARCH=${{ matrix.arch }}
           UPINFO="gh-releases-zsync|$GITHUB_REPOSITORY_OWNER|desktop|latest|zen-$ARCH.AppImage.zsync"
-          rm build/AppDir/.DirIcon || true
-          cp configs/branding/${{ inputs.update_branch }}/logo128.png build/AppDir/usr/share/icons/hicolor/128x128/apps/zen.png
-          cp configs/branding/${{ inputs.update_branch }}/logo128.png build/AppDir/zen.png && ln -s zen.png build/AppDir/.DirIcon
+          rm AppDir/.DirIcon || true
+          cp configs/branding/${{ inputs.update_branch }}/logo128.png AppDir/usr/share/icons/hicolor/128x128/apps/zen.png
+          cp configs/branding/${{ inputs.update_branch }}/logo128.png AppDir/zen.png && ln -s zen.png AppDir/.DirIcon
 
           if [ "${{ inputs.update_branch }}" = "twilight" ]; then
-            sed -i -e 's/Name=Zen Browser/Name=Zen Twilight/g' build/AppDir/zen.desktop
-            sed -i -e 's/StartupWMClass=zen/StartupWMClass=zen-twilight/g' build/AppDir/zen.desktop
+            sed -i -e 's/Name=Zen Browser/Name=Zen Twilight/g' AppDir/zen.desktop
+            sed -i -e 's/StartupWMClass=zen/StartupWMClass=zen-twilight/g' AppDir/zen.desktop
           fi
 
-          sed -i -e 's/\$VERSION/${{ needs.build-data.outputs.version }}/g' build/AppDir/zen.desktop
-
-          APPDIR=build/AppDir
+          APPDIR=AppDir
           tar -xvf *.tar.* && rm -rf *.tar.*
           mv zen/* $APPDIR/
           wget "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
           wget "https://github.com/VHSgunzo/uruntime/releases/latest/download/uruntime-appimage-squashfs-lite-$ARCH"
           chmod +x *.AppImage
           chmod +x ./uruntime-appimage-squashfs-lite-"$ARCH"
-          chmod +x ./build/AppDir/AppRun
+          chmod +x ./AppDir/AppRun
 
           # keep the uruntime mountpoint (massively speeds up launch time)
           sed -i 's|URUNTIME_MOUNT=[0-9]|URUNTIME_MOUNT=0|' ./uruntime-appimage-squashfs-lite-"$ARCH"
@@ -492,14 +436,13 @@ jobs:
     if: always()
     steps:
       - name: Download aws-cli
-        if: ${{ inputs.update_branch == 'release' }}
         run: |
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
           unzip awscliv2.zip
           sudo ./aws/install --update
 
       - name: Stop self-hosted runner
-        if: ${{ inputs.update_branch == 'release' }}
+        if: ${{ inputs.create_release && inputs.update_branch == 'release' }}
         run: |
           echo "Stopping self-hosted runner"
           echo "${{ secrets.SELF_HOSTED_RUNNER_STOP_SCRIPT }}" | base64 -d > stop.sh
@@ -507,26 +450,17 @@ jobs:
           bash ./stop.sh > /dev/null
 
       - name: Remove self-hosted runner script
-        if: always() && ${{ inputs.update_branch == 'release' }}
+        if: always() && ${{ inputs.create_release && inputs.update_branch == 'release' }}
         run: |
           echo "Removing self-hosted runner script"
           rm stop.sh || true
 
   release:
+    if: ${{ inputs.create_release || inputs.update_branch == 'twilight' }}
     permissions: write-all
     name: Release
-    needs:
-      [
-        build-data,
-        linux,
-        windows-step-3,
-        check-release,
-        mac-uni,
-        appimage,
-        source,
-        stop-self-hosted,
-      ]
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    needs: [build-data, linux, windows-step-3, check-release, mac-uni, appimage, source, lint, stop-self-hosted]
+    runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.update_branch == 'release' && 'Deploy-Release' || 'Deploy-Twilight' }}
 
@@ -540,6 +474,9 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
 
+      - name: List
+        run: find .
+
       - name: Checkout updates repository
         uses: actions/checkout@v4
         with:
@@ -547,48 +484,15 @@ jobs:
           path: updates-server
           token: ${{ secrets.DEPLOY_KEY }}
 
-      - name: Download signed windows objects
+      - name: Download object files
         if: ${{ inputs.update_branch == 'release' }}
-        env:
-          GH_TOKEN: ${{ secrets.DEPLOY_KEY }}
         run: |
-          mkdir -p .github/workflows/object
-          gh release download "windows-signed-${{ github.run_id }}" \
-            --repo zen-browser/windows-binaries \
-            --pattern 'windows-x64-signed-*.tar.gz' \
-            --dir .github/workflows/object
-
-          for arch in x86_64 arm64; do
-            archive=".github/workflows/object/windows-x64-signed-$arch.tar.gz"
-            dest=".github/workflows/object/windows-x64-signed-$arch"
-            echo "Expanding $archive"
-            mkdir -p "$dest"
-            tar -xvf "$archive" -C "$dest"
-          done
-
-      - name: Sign MAR files
-        env:
-          SIGNMAR: ${{ github.workspace }}/linux-bin-x86_64/signmar
-          ZEN_MAR_SIGNING_PASSWORD: ${{ secrets.ZEN_MAR_SIGNING_PASSWORD }}
-          ZEN_SIGNING_CERT_PEM_BASE64: ${{ secrets.ZEN_SIGNING_CERT_PEM_BASE64 }}
-          ZEN_SIGNING_PRIVATE_KEY_PEM_BASE64: ${{ secrets.ZEN_SIGNING_PRIVATE_KEY_PEM_BASE64 }}
-        run: |
-          bash scripts/mar_sign.sh -s
-
-      - name: Verify MARs and update manifests
-        env:
-          SIGNMAR: ${{ github.workspace }}/linux-bin-x86_64/signmar
-          RELEASE_BRANCH: ${{ inputs.update_branch }}
-        run: |
-          bash scripts/mar_verify.sh
+          git clone https://github.com/zen-browser/windows-binaries.git .github/workflows/object
 
       - name: Copy update manifests
         env:
           RELEASE_BRANCH: ${{ inputs.update_branch }}
         run: |
-          # IMPORTANT: If changing any of these names,
-          # make sure to also update the paths in the mar_sign.sh script
-
           cd updates-server
           mkdir -p updates
           cp -a ../linux_update_manifest_x86_64/.  updates/
@@ -606,24 +510,37 @@ jobs:
 
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
-        if: ${{ inputs.create_release || inputs.update_branch == 'twilight' }}
         with:
           commit_message: 🚀 Update update manifests
           commit_user_name: Zen Browser Robot
           commit_user_email: zen-browser-auto@users.noreply.github.com
           repository: ./updates-server
 
-      - name: Generate Release Notes
-        env:
-          RELEASE_BRANCH: ${{ inputs.update_branch }}
-        run: bash .github/workflows/src/generate_release_notes.sh
+      - name: Build release README
+        run: |
+          echo "# Zen Stable Release" > README.md
+          echo "This is the stable release of Zen Browser." >> README.md
+          echo "## Sha256 checksums" >> README.md
+          echo "```" >> README.md
+          sha256sum ./zen.source.tar.zst/* >> README.md
+          sha256sum ./zen.linux-x86_64.tar.xz/* >> README.md
+          sha256sum ./zen.linux-aarch64.tar.xz/* >> README.md
+          sha256sum ./zen-x86_64.AppImage/* >> README.md
+          sha256sum ./zen-x86_64.AppImage.zsync/* >> README.md
+          sha256sum ./zen-aarch64.AppImage/* >> README.md
+          sha256sum ./zen-aarch64.AppImage.zsync/* >> README.md
+          sha256sum ./linux-aarch64.mar/* >> README.md
+          sha256sum ./.github/workflows/object/windows-x64-signed-x86_64/zen.installer.exe >> README.md
+          sha256sum ./.github/workflows/object/windows-x64-signed-arm64/zen.installer-arm64.exe >> README.md
+          sha256sum ./zen.macos-universal.dmg/* >> README.md
+          echo "```" >> README.md
 
         # If we are on Twilight, we want to just update the Twilight tag's release
       - name: Update Twilight tag
         if: ${{ inputs.update_branch == 'twilight' }}
-        uses: softprops/action-gh-release@v2.2.2
+        uses: softprops/action-gh-release@v2
         with:
-          body_path: release_notes.md
+          body_path: README.md
           files: |
             ./zen.source.tar.zst/*
             ./zen.linux-x86_64.tar.xz/*
@@ -632,6 +549,8 @@ jobs:
             ./zen-x86_64.AppImage.zsync/*
             ./zen-aarch64.AppImage/*
             ./zen-aarch64.AppImage.zsync/*
+            ./zen.win-x86_64.zip/*
+            ./zen.win-arm64.zip/*
             ./linux.mar/*
             ./linux-aarch64.mar/*
             ./windows.mar/*
@@ -640,8 +559,8 @@ jobs:
             ./zen.installer.exe/*
             ./zen.installer-arm64.exe/*
             ./zen.macos-universal.dmg/*
-          tag_name: "twilight-1"
-          name: "Twilight build - ${{ needs.build-data.outputs.version }} (${{ needs.build-data.outputs.build_date }} at ${{ needs.build-data.outputs.build_time }})"
+          tag_name: 'twilight'
+          name: 'Twilight build - ${{ needs.build-data.outputs.version }} (${{ needs.build-data.outputs.build_date }} at ${{ needs.build-data.outputs.build_time }})'
           draft: false
           generate_release_notes: false
           prerelease: true
@@ -650,30 +569,17 @@ jobs:
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
 
-      - name: Upload signed MAR files to workflow artifacts
-        if: ${{ inputs.update_branch == 'release' && !inputs.create_release }}
-        uses: actions/upload-artifact@v4
-        with:
-          retention-days: 5
-          name: signed-mar-files
-          path: |
-            ./linux.mar/*
-            ./linux-aarch64.mar/*
-            ./.github/workflows/object/windows-x64-signed-x86_64/windows.mar
-            ./.github/workflows/object/windows-x64-signed-arm64/windows-arm64.mar
-            ./macos.mar/*
-
       - name: Release
-        uses: softprops/action-gh-release@v2.2.2
-        if: ${{ inputs.update_branch == 'release' && inputs.create_release }}
+        uses: softprops/action-gh-release@v2
+        if: ${{ inputs.update_branch == 'release' }}
         with:
           token: ${{ secrets.DEPLOY_KEY }}
           tag_name: ${{ needs.build-data.outputs.version }}
           prerelease: false
           fail_on_unmatched_files: false
           generate_release_notes: false
-          name: "Release build - ${{ needs.build-data.outputs.version }} (${{ needs.build-data.outputs.build_date }})"
-          body_path: release_notes.md
+          name: 'Release build - ${{ needs.build-data.outputs.version }} (${{ needs.build-data.outputs.build_date }})'
+          body_path: README.md
           files: |
             ./zen.source.tar.zst/*
             ./zen.linux-x86_64.tar.xz/*
@@ -682,6 +588,8 @@ jobs:
             ./zen-x86_64.AppImage.zsync/*
             ./zen-aarch64.AppImage/*
             ./zen-aarch64.AppImage.zsync/*
+            ./.github/workflows/object/windows-x64-signed-x86_64/zen.win-x86_64.zip
+            ./.github/workflows/object/windows-x64-signed-arm64/zen.win-arm64.zip
             ./linux.mar/*
             ./linux-aarch64.mar/*
             ./.github/workflows/object/windows-x64-signed-x86_64/windows.mar
@@ -690,17 +598,6 @@ jobs:
             ./.github/workflows/object/windows-x64-signed-x86_64/zen.installer.exe
             ./.github/workflows/object/windows-x64-signed-arm64/zen.installer-arm64.exe
             ./zen.macos-universal.dmg/*
-
-      - name: Clean up signed windows staging release
-        if: ${{ inputs.update_branch == 'release' }}
-        env:
-          GH_TOKEN: ${{ secrets.DEPLOY_KEY }}
-        run: |
-          # The per-run staging prerelease on windows-binaries has served its purpose
-          # now that the signed bundles are published in the real release. Never fail
-          # the release over this cleanup.
-          gh release delete "windows-signed-${{ github.run_id }}" \
-            --repo zen-browser/windows-binaries --cleanup-tag --yes || true
 
   prepare-flatpak:
     if: ${{ inputs.create_release && inputs.update_branch == 'release' }}
@@ -720,7 +617,7 @@ jobs:
         run: |
           git pull
           sudo apt-get update
-          npm ci
+          npm install
 
       - name: Generate new Flatpak release
         run: |
@@ -753,7 +650,7 @@ jobs:
       - name: Commit
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "[release]: Update Flatpak manifest"
+          commit_message: '[release]: Update Flatpak manifest'
           commit_user_name: Zen Browser Robot
           commit_user_email: zen-browser-auto@users.noreply.github.com
           repository: ./flatpak
@@ -808,7 +705,7 @@ jobs:
             --linux-archive zen.linux-x86_64.tar.xz \
             --linux-aarch64-archive zen.linux-aarch64.tar.xz \
             --output app.zen_browser.zen.yml \
-            --template-root ./zen-browser/build/flatpak
+            --template-root ./zen-browser/flatpak
 
       - name: Commit changes
         run: |
@@ -836,8 +733,8 @@ jobs:
           GIT_CURL_VERBOSE: 1
         with:
           token: ${{ secrets.DEPLOY_KEY }}
-          commit-message: Update to version `${{ needs.build-data.outputs.version }}`
-          title: Update to version `${{ needs.build-data.outputs.version }}`
+          commit-message: 🚀 Update to version ${{ needs.build-data.outputs.version }}
+          title: 🚀 Update to version ${{ needs.build-data.outputs.version }}
           body: |
             This PR updates the Zen Browser Flatpak package to version ${{ needs.build-data.outputs.version }}.
 

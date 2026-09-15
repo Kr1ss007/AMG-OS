@@ -1,0 +1,54 @@
+unset MOZ_STDCXX_COMPAT
+
+ac_add_options --disable-dmd
+ac_add_options --enable-eme=widevine
+
+export MOZ_MACBUNDLE_ID=${appId}
+export MOZ_MACBUNDLE_NAME="Zen Browser.app"
+
+# override LTO settings
+# TODO: Dont
+export MOZ_LTO=cross,thin
+ac_add_options --enable-lto=cross,thin
+
+if test "$ZEN_RELEASE"; then
+  if test "$ZEN_GA_DISABLE_PGO"; then
+    export ZEN_DUMMY=1
+  else
+    export MOZ_PGO=1
+    ac_add_options MOZ_PGO=1
+  fi
+fi
+
+if test "$SURFER_COMPAT" = "x86_64"; then
+    ac_add_options --target=x86_64-apple-darwin
+
+    ac_add_options --enable-wasm-avx
+    ac_add_options --enable-optimize="-march=nehalem -mtune=haswell -O3 -w"
+
+    export CFLAGS="-O3 -march=nehalem"
+    export CPPFLAGS="-O3 -march=nehalem"
+    export CXXFLAGS="-O3 -march=nehalem"
+    export LDFLAGS="-Wl,-O3 -march=nehalem"
+    export RUSTFLAGS="-Ctarget-cpu=nehalem"
+else
+    ac_add_options --target=aarch64-apple-darwin
+
+    ac_add_options --enable-optimize="-O3 -mcpu=apple-m1 -march=armv8.3-a+simd"
+
+    # As of Clang 13, the default is -mcpu=apple-m1 when using a aarch64-apple-macos target,
+    # but we're using apple64-apple-darwin, which defaults to -mcpu=apple-a7, which disables
+    # a bunch of # performance-enabling CPU features.
+    export CFLAGS="-O3 -march=armv8.3-a+simd -mcpu=apple-m1"
+    export CPPFLAGS="-O3 -march=armv8.3-a+simd -mcpu=apple-m1"
+    export CXXFLAGS="-O3 -march=armv8.3-a+simd -mcpu=apple-m1"
+    export LDFLAGS="-Wl,-O3 -march=armv8.3-a+simd -mcpu=apple-m1"
+    export RUSTFLAGS="-C target-feature=+v8.3a -Ctarget-cpu=apple-m1"
+fi
+
+export VERBOSE=1
+
+# Enable polly for macos, since they have a more stable set of GPU drivers,
+# unlike Linux, which has a lot of different drivers.
+# Edit: let's run some experiments, see if RAM usage lowers significantly
+# export POLLY="-mllvm -polly -mllvm -polly-2nd-level-tiling -mllvm -polly-loopfusion-greedy -mllvm -polly-pattern-matching-based-opts -mllvm -polly-position=before-vectorizer -mllvm -polly-vectorizer=stripmine"

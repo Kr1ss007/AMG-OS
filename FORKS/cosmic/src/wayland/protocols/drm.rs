@@ -38,11 +38,7 @@ use smithay::{
 };
 use tracing::trace;
 
-use std::{
-    convert::TryFrom,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::{convert::TryFrom, path::PathBuf, sync::Arc};
 
 pub enum ImportError {
     Failed,
@@ -56,28 +52,19 @@ pub trait DrmHandler<R: 'static> {
     }
 }
 
-#[derive(Debug)]
-pub struct WlDrmState<R> {
-    device: Arc<Mutex<DrmGlobalDeviceData>>,
-    global: GlobalId,
-    _marker: std::marker::PhantomData<R>,
-}
-
-#[derive(Debug)]
-pub struct DrmGlobalDeviceData {
-    formats: Vec<Fourcc>,
-    path: PathBuf,
-}
+#[derive(Debug, Default)]
+pub struct WlDrmState<R>(std::marker::PhantomData<R>);
 
 /// Data associated with a drm global.
 pub struct DrmGlobalData {
     filter: Box<dyn for<'a> Fn(&'a Client) -> bool + Send + Sync>,
+    formats: Arc<Vec<Fourcc>>,
+    device_path: PathBuf,
     dmabuf_global: DmabufGlobal,
-    device: Arc<Mutex<DrmGlobalDeviceData>>,
 }
 
 pub struct DrmInstanceData {
-    device: Arc<Mutex<DrmGlobalDeviceData>>,
+    formats: Arc<Vec<Fourcc>>,
     dmabuf_global: DmabufGlobal,
 }
 
@@ -99,24 +86,16 @@ where
         data_init: &mut DataInit<'_, D>,
     ) {
         let data = DrmInstanceData {
-            device: global_data.device.clone(),
+            formats: global_data.formats.clone(),
             dmabuf_global: global_data.dmabuf_global,
         };
         let drm_instance = data_init.init(resource, data);
 
-        drm_instance.device(
-            global_data
-                .device
-                .lock()
-                .unwrap()
-                .path
-                .to_string_lossy()
-                .into_owned(),
-        );
+        drm_instance.device(global_data.device_path.to_string_lossy().into_owned());
         if drm_instance.version() >= 2 {
             drm_instance.capabilities(wl_drm::Capability::Prime as u32);
         }
-        for format in global_data.device.lock().unwrap().formats.iter() {
+        for format in global_data.formats.iter() {
             if let Ok(converted) = wl_drm::Format::try_from(*format as u32) {
                 drm_instance.format(converted as u32);
             }
@@ -169,7 +148,7 @@ where
             } => {
                 let format = match Fourcc::try_from(format) {
                     Ok(format) => {
-                        if !data.device.lock().unwrap().formats.contains(&format) {
+                        if !data.formats.contains(&format) {
                             drm.post_error(
                                 wl_drm::Error::InvalidFormat,
                                 String::from("Format not advertised by wl_drm"),
@@ -201,7 +180,7 @@ where
                     Modifier::Invalid,
                     DmabufFlags::empty(),
                 );
-                dma.add_plane(name, offset0 as u32, stride0 as u32);
+                dma.add_plane(name, 0, offset0 as u32, stride0 as u32);
                 match dma.build() {
                     Some(dmabuf) => {
                         match state.dmabuf_imported(&data.dmabuf_global, dmabuf.clone()) {
@@ -241,12 +220,13 @@ where
 }
 
 impl<R: 'static> WlDrmState<R> {
-    pub fn new<D>(
+    pub fn create_global<D>(
+        &mut self,
         display: &DisplayHandle,
         device_path: PathBuf,
         formats: FormatSet,
         dmabuf_global: &DmabufGlobal,
-    ) -> Self
+    ) -> GlobalId
     where
         D: GlobalDispatch<wl_drm::WlDrm, DrmGlobalData>
             + Dispatch<wl_drm::WlDrm, DrmInstanceData>
@@ -254,16 +234,19 @@ impl<R: 'static> WlDrmState<R> {
             + DmabufHandler
             + 'static,
     {
-        Self::new_with_filter::<D, _>(display, device_path, formats, dmabuf_global, |_| true)
+        self.create_global_with_filter::<D, _>(display, device_path, formats, dmabuf_global, |_| {
+            true
+        })
     }
 
-    pub fn new_with_filter<D, F>(
+    pub fn create_global_with_filter<D, F>(
+        &mut self,
         display: &DisplayHandle,
         device_path: PathBuf,
         formats: FormatSet,
         dmabuf_global: &DmabufGlobal,
         client_filter: F,
-    ) -> Self
+    ) -> GlobalId
     where
         D: GlobalDispatch<wl_drm::WlDrm, DrmGlobalData>
             + Dispatch<wl_drm::WlDrm, DrmInstanceData>
@@ -272,45 +255,21 @@ impl<R: 'static> WlDrmState<R> {
             + 'static,
         F: for<'a> Fn(&'a Client) -> bool + Send + Sync + 'static,
     {
-        let device = Arc::new(Mutex::new(DrmGlobalDeviceData {
-            formats: formats
+        let formats = Arc::new(
+            formats
                 .into_iter()
                 .filter(|f| f.modifier == Modifier::Invalid)
                 .map(|f| f.code)
                 .collect(),
-            path: device_path,
-        }));
-
+        );
         let data = DrmGlobalData {
             filter: Box::new(client_filter),
-            device: device.clone(),
+            formats,
+            device_path,
             dmabuf_global: *dmabuf_global,
         };
 
-        let global = display.create_global::<D, wl_drm::WlDrm, _>(2, data);
-
-        WlDrmState {
-            device,
-            global,
-            _marker: Default::default(),
-        }
-    }
-
-    pub fn update_device(&mut self, device_path: PathBuf, formats: FormatSet) {
-        let new_device = DrmGlobalDeviceData {
-            formats: formats
-                .into_iter()
-                .filter(|f| f.modifier == Modifier::Invalid)
-                .map(|f| f.code)
-                .collect(),
-            path: device_path,
-        };
-
-        *self.device.lock().unwrap() = new_device;
-    }
-
-    pub fn global(&self) -> &GlobalId {
-        &self.global
+        display.create_global::<D, wl_drm::WlDrm, _>(2, data)
     }
 }
 

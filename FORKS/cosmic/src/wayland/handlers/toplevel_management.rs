@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 
 use smithay::{
-    backend::input::InputTime,
     desktop::{WindowSurfaceType, layer_map_for_output},
     input::{Seat, pointer::MotionEvent},
     output::Output,
@@ -43,7 +42,7 @@ impl ToplevelManagementHandler for State {
                 .spaces_for_output(output)
                 .enumerate()
                 .find(|(_, w)| {
-                    w.get_fullscreen_surfaces().any(|f| &f.surface == window)
+                    w.get_fullscreen().is_some_and(|f| f == window)
                         || w.mapped()
                             .flat_map(|m| m.windows().map(|(s, _)| s))
                             .any(|w| &w == window)
@@ -111,24 +110,22 @@ impl ToplevelManagementHandler for State {
 
             std::mem::drop(shell);
 
-            // move pointer to window if it’s on a different monitor/output
-            if seat.active_output() != *output
-                && self.common.config.cosmic_conf.cursor_follows_focus
-                && let Some(new_pos) = new_pos
-            {
-                seat.set_active_output(output);
-                if let Some(ptr) = seat.get_pointer() {
-                    let serial = SERIAL_COUNTER.next_serial();
-                    ptr.motion(
-                        self,
-                        None,
-                        &MotionEvent {
-                            location: new_pos.to_f64().as_logical(),
-                            serial,
-                            time: InputTime::now(),
-                        },
-                    );
-                    ptr.frame(self);
+            if seat.active_output() != *output {
+                if let Some(new_pos) = new_pos {
+                    seat.set_active_output(output);
+                    if let Some(ptr) = seat.get_pointer() {
+                        let serial = SERIAL_COUNTER.next_serial();
+                        ptr.motion(
+                            self,
+                            None,
+                            &MotionEvent {
+                                location: new_pos.to_f64().as_logical(),
+                                serial,
+                                time: self.common.clock.now().as_millis(),
+                            },
+                        );
+                        ptr.frame(self);
+                    }
                 }
             }
 

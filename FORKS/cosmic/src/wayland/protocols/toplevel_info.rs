@@ -5,10 +5,7 @@ use std::{collections::HashSet, sync::Mutex};
 use smithay::{
     output::Output,
     reexports::{
-        wayland_protocols::ext::foreign_toplevel_list::v1::server::{
-            ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
-            ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1,
-        },
+        wayland_protocols::ext::foreign_toplevel_list::v1::server::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
         wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak,
             backend::{ClientId, GlobalId},
@@ -17,8 +14,7 @@ use smithay::{
     },
     utils::{IsAlive, Logical, Rectangle, user_data::UserDataMap},
     wayland::foreign_toplevel_list::{
-        ForeignToplevelHandle, ForeignToplevelListGlobalData, ForeignToplevelListHandler,
-        ForeignToplevelListState,
+        ForeignToplevelHandle, ForeignToplevelListHandler, ForeignToplevelListState,
     },
 };
 
@@ -304,8 +300,6 @@ pub fn toplevel_leave_workspace(toplevel: &impl Window, workspace: &WorkspaceHan
 impl<D, W> ToplevelInfoState<D, W>
 where
     D: GlobalDispatch<ZcosmicToplevelInfoV1, ToplevelInfoGlobalData>
-        + GlobalDispatch<ExtForeignToplevelListV1, ForeignToplevelListGlobalData>
-        + Dispatch<ExtForeignToplevelHandleV1, ForeignToplevelHandle>
         + Dispatch<ZcosmicToplevelInfoV1, ()>
         + Dispatch<ZcosmicToplevelHandleV1, ToplevelHandleState<W>>
         + ForeignToplevelListHandler
@@ -341,16 +335,9 @@ where
         let toplevel_handle = self
             .foreign_toplevel_list
             .new_toplevel::<D>(toplevel.title(), toplevel.app_id());
-
-        if let Some(toplevel_state) = toplevel.user_data().get::<ToplevelState>() {
-            let mut toplevel_state = toplevel_state.lock().unwrap();
-            toplevel_state.foreign_handle = Some(toplevel_handle);
-        } else {
-            toplevel
-                .user_data()
-                .insert_if_missing(move || ToplevelStateInner::from_foreign(toplevel_handle));
-        }
-
+        toplevel
+            .user_data()
+            .insert_if_missing(move || ToplevelStateInner::from_foreign(toplevel_handle));
         for instance in &self.instances {
             send_toplevel_to_client::<D, W>(&self.dh, workspace_state, instance, toplevel);
         }
@@ -418,12 +405,6 @@ where
                         handle.closed();
                     }
                 }
-                // Remove the foreign handle too, so new subscribers cannot
-                // discover a toplevel whose window has already been destroyed.
-                if let Some(handle) = state.foreign_handle.take() {
-                    self.foreign_toplevel_list.remove_toplevel(&handle);
-                }
-                *state = Default::default();
                 dirty = true;
                 false
             }
@@ -501,18 +482,35 @@ where
         .unwrap()
         .lock()
         .unwrap();
+    let foreign_toplevel_handle = state.foreign_handle.as_ref();
     let mut changed = false;
 
-    let new_title = (handle_state.title != window.title()).then(|| window.title());
-    let new_app_id = (handle_state.app_id != window.app_id()).then(|| window.app_id());
+    if handle_state.title != window.title() {
+        handle_state.title = window.title();
+        if instance.version() < zcosmic_toplevel_info_v1::REQ_GET_COSMIC_TOPLEVEL_SINCE {
+            instance.title(handle_state.title.clone());
+        }
+        if let Some(handle) = foreign_toplevel_handle {
+            handle.send_title(&handle_state.title);
+        }
+        changed = true;
+    }
+    if handle_state.app_id != window.app_id() {
+        handle_state.app_id = window.app_id();
+        if instance.version() < zcosmic_toplevel_info_v1::REQ_GET_COSMIC_TOPLEVEL_SINCE {
+            instance.app_id(handle_state.app_id.clone());
+        }
+        if let Some(handle) = foreign_toplevel_handle {
+            handle.send_app_id(&handle_state.app_id);
+        }
+        changed = true;
+    }
 
-    let new_states = if handle_state.states.as_ref().is_none_or(|states| {
+    if handle_state.states.as_ref().is_none_or(|states| {
         (states.contains(&States::Maximized) != window.is_maximized())
             || (states.contains(&States::Fullscreen) != window.is_fullscreen())
             || (states.contains(&States::Activated) != window.is_activated())
             || (states.contains(&States::Minimized) != window.is_minimized())
-            || (instance.version() >= zcosmic_toplevel_info_v1::REQ_GET_COSMIC_TOPLEVEL_SINCE
-                && states.contains(&States::Sticky) != window.is_sticky())
     }) {
         let mut states = Vec::new();
         if window.is_maximized() {
@@ -532,64 +530,8 @@ where
         {
             states.push(States::Sticky);
         }
-        Some(states)
-    } else {
-        None
-    };
-
-    let geometry_changed = if !window.is_resizing() {
-        let geometry = window.global_geometry();
-        if handle_state.geometry != geometry {
-            handle_state.geometry = geometry;
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    };
-
-    let outputs_changed = state.outputs != handle_state.outputs
-        || handle_state.wl_outputs.iter().any(|o| !o.is_alive());
-
-    let workspaces_changed = state.workspaces != handle_state.workspaces;
-
-    if new_title.is_none()
-        && new_app_id.is_none()
-        && new_states.is_none()
-        && !geometry_changed
-        && !outputs_changed
-        && !workspaces_changed
-    {
-        return false;
-    }
-
-    let foreign_toplevel_handle = state.foreign_handle.as_ref();
-
-    if let Some(title) = new_title {
-        handle_state.title = title;
-        if instance.version() < zcosmic_toplevel_info_v1::REQ_GET_COSMIC_TOPLEVEL_SINCE {
-            instance.title(handle_state.title.clone());
-        }
-        if let Some(handle) = foreign_toplevel_handle {
-            handle.send_title(&handle_state.title);
-        }
-        changed = true;
-    }
-
-    if let Some(app_id) = new_app_id {
-        handle_state.app_id = app_id;
-        if instance.version() < zcosmic_toplevel_info_v1::REQ_GET_COSMIC_TOPLEVEL_SINCE {
-            instance.app_id(handle_state.app_id.clone());
-        }
-        if let Some(handle) = foreign_toplevel_handle {
-            handle.send_app_id(&handle_state.app_id);
-        }
-        changed = true;
-    }
-
-    if let Some(states) = new_states {
         handle_state.states = Some(states.clone());
+
         let states = states
             .iter()
             .flat_map(|state| (*state as u32).to_ne_bytes())
@@ -598,9 +540,17 @@ where
         changed = true;
     }
 
-    if (outputs_changed || geometry_changed)
-        && let Ok(client) = dh.get_client(instance.id())
-    {
+    let mut geometry_changed = false;
+    if !window.is_resizing() {
+        let geometry = window.global_geometry();
+        if handle_state.geometry != geometry {
+            handle_state.geometry = geometry;
+            changed = true;
+            geometry_changed = true;
+        }
+    }
+
+    if let Ok(client) = dh.get_client(instance.id()) {
         handle_state.outputs = state.outputs.clone();
 
         let handle_state = &mut *handle_state;
@@ -617,8 +567,10 @@ where
                         instance.geometry(&wl_output, geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
                     }
                     changed = true;
-                } else if geometry_changed && let Some(geo) = geometry {
-                    instance.geometry(&wl_output, geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+                } else if geometry_changed {
+                    if let Some(geo) = geometry {
+                        instance.geometry(&wl_output, geo.loc.x, geo.loc.y, geo.size.w, geo.size.h);
+                    }
                 }
             }
         }
@@ -636,29 +588,27 @@ where
         });
     }
 
-    if workspaces_changed {
-        for new_workspace in state
-            .workspaces
-            .iter()
-            .filter(|w| !handle_state.workspaces.contains(w))
-        {
-            for handle in workspace_state.raw_ext_workspace_handles(new_workspace, &instance.id()) {
-                instance.ext_workspace_enter(handle);
-                changed = true;
-            }
+    for new_workspace in state
+        .workspaces
+        .iter()
+        .filter(|w| !handle_state.workspaces.contains(w))
+    {
+        for handle in workspace_state.raw_ext_workspace_handles(new_workspace, &instance.id()) {
+            instance.ext_workspace_enter(handle);
+            changed = true;
         }
-        for old_workspace in handle_state
-            .workspaces
-            .iter()
-            .filter(|w| !state.workspaces.contains(w))
-        {
-            for handle in workspace_state.raw_ext_workspace_handles(old_workspace, &instance.id()) {
-                instance.ext_workspace_leave(handle);
-                changed = true;
-            }
-        }
-        handle_state.workspaces = state.workspaces.clone();
     }
+    for old_workspace in handle_state
+        .workspaces
+        .iter()
+        .filter(|w| !state.workspaces.contains(w))
+    {
+        for handle in workspace_state.raw_ext_workspace_handles(old_workspace, &instance.id()) {
+            instance.ext_workspace_leave(handle);
+            changed = true;
+        }
+    }
+    handle_state.workspaces = state.workspaces.clone();
 
     if changed {
         if instance.version() < zcosmic_toplevel_info_v1::REQ_GET_COSMIC_TOPLEVEL_SINCE {
@@ -678,13 +628,14 @@ pub fn window_from_handle<W: Window + 'static>(handle: ZcosmicToplevelHandleV1) 
         .and_then(|state| state.lock().unwrap().window.clone())
 }
 
-pub fn window_from_ext<W: Window + 'static, D>(
-    state: &D,
-    handle: ForeignToplevelHandle,
-) -> Option<&W>
+pub fn window_from_ext_handle<'a, W: Window + 'static, D>(
+    state: &'a D,
+    foreign_toplevel: &ExtForeignToplevelHandleV1,
+) -> Option<&'a W>
 where
     D: ToplevelInfoHandler<Window = W>,
 {
+    let handle = ForeignToplevelHandle::from_resource(foreign_toplevel)?;
     state.toplevel_info_state().toplevels.iter().find(|w| {
         w.user_data().get::<ToplevelState>().and_then(|inner| {
             inner
@@ -695,17 +646,6 @@ where
                 .map(|handle| handle.identifier())
         }) == Some(handle.identifier())
     })
-}
-
-pub fn window_from_ext_handle<'a, W: Window + 'static, D>(
-    state: &'a D,
-    foreign_toplevel: &ExtForeignToplevelHandleV1,
-) -> Option<&'a W>
-where
-    D: ToplevelInfoHandler<Window = W>,
-{
-    let handle = ForeignToplevelHandle::from_resource(foreign_toplevel)?;
-    window_from_ext(state, handle)
 }
 
 macro_rules! delegate_toplevel_info {

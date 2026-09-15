@@ -1,7 +1,3 @@
-# This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
-
 import os
 import shutil
 import sys
@@ -10,32 +6,13 @@ import sys
 BROWSER_LOCALES = "engine/browser/locales"
 
 
-def get_language_code(lang_id: str) -> str:
-  """
-  Retrieves the language code from the language-maps file.
-
-  :param lang_id: Language identifier (e.g., 'nb', 'fr', etc.)
-  :return: Corresponding language code (e.g., 'nb-NO', 'fr-FR', etc.)
-  """
-  language_maps_path = os.path.join("locales", "language-maps")
-  if not os.path.exists(language_maps_path):
-    return lang_id  # Return the original if the file doesn't exist
-
-  with open(language_maps_path, "r", encoding="utf-8") as f:
-    for line in f:
-      if line.startswith(f"{lang_id}:"):
-        return line.split(":", 1)[1].strip()
-  return lang_id  # Return the original if no mapping is found
-
-
 def copy_browser_locales(lang_id: str):
   """
   Copies language pack files to the specified browser locale directory.
 
   :param lang_id: Language identifier (e.g., 'en-US', 'fr', etc.)
   """
-  lang_code = get_language_code(lang_id)
-  lang_path = os.path.join(BROWSER_LOCALES, lang_code)
+  lang_path = os.path.join(BROWSER_LOCALES, lang_id)
 
   # Create the directory for the language pack if it doesn't exist
   os.makedirs(lang_path, exist_ok=True)
@@ -50,7 +27,7 @@ def copy_browser_locales(lang_id: str):
           os.remove(os.path.join(root, file))
 
     # Copy files from the source directory
-    source_path = "./locales/en-US/browser/"
+    source_path = "./l10n/en-US/browser/"
     copy_files(source_path, lang_path)
     return
 
@@ -58,7 +35,7 @@ def copy_browser_locales(lang_id: str):
   if os.path.exists(lang_path):
     shutil.rmtree(lang_path)  # Remove existing directory
 
-  source_path = f"./locales/{lang_id}/"
+  source_path = f"./l10n/{lang_id}/"
   copy_files(source_path, lang_path)
 
 

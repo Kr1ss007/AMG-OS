@@ -1,0 +1,14 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 19a470608b7de28a946353d4c09a56b4dd3fd69a..37e9687c86b5725ee5d5071b632b5927ffb6bd27 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -201,6 +201,9 @@ rure = { path = "third_party/rust/rure" }
+ # Patch `plist` to work with `indexmap` 2.*
+ plist = { path = "third_party/rust/plist" }
+ 
++# Patch mime_guess to add missing mime types
++mime_guess = { path = "third_party/rust/mime_guess" }
++
+ # To-be-published changes.
+ unicode-bidi = { git = "https://github.com/servo/unicode-bidi", rev = "ca612daf1c08c53abe07327cb3e6ef6e0a760f0c" }
+ nss-gk-api = { git = "https://github.com/beurdouche/nss-gk-api", rev = "e48a946811ffd64abc78de3ee284957d8d1c0d63" }

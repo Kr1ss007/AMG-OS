@@ -1,0 +1,30 @@
+[Unit]
+Description=AMG-OS Process 2 (Desktop Session & Wayland Compositor)
+Documentation=file:///home/raven1zed/Documents/AMG-OS/docs/AMGOS_SPEC_v0.0.1.txt
+Requires=amgos-system.service
+After=amgos-system.service sound.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/amgos-desktop
+Restart=on-failure
+RestartSec=200ms
+TimeoutStopSec=5s
+KillMode=mixed
+
+# Runs under standard logged-in user
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=AMGOS
+
+# Desktop session restart behavior per SPEC Section 3.3
+# A desktop crash returns to lockscreen without data loss or system reboot
+ExecStopPost=/bin/sh -c 'if [ "$$EXIT_STATUS" != "0" ]; then echo "[AMG-OS] Process 2 recovered from desktop fault" >&2; fi'
+
+# Zero TTY messages; output routed to journal
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,5 +1,5 @@
 a11y-zoom-move-continuously = Zobrazení se pohybuje plynule s ukazatelem
-a11y-zoom-move-onedge = Zobrazení se pohybuje, když ukazatel dosáhne okraje
+a11y-zoom-move-onedge = Zobrazení se pohybuje, když ukazatel dosáhne kraje
 a11y-zoom-move-centered = Zobrazení se pohybuje tak, aby ukazatel zůstal uprostřed
 a11y-zoom-settings = Nastavení lupy...
 grow-window = Zvětšit
@@ -18,7 +18,7 @@ window-menu-move-next-workspace = Přesunout na další pracovní plochu
 window-menu-stack = Vytvořit zásobník oken
 window-menu-unstack-all = Oddělit okna
 window-menu-unstack = Oddělit okno
-window-menu-sticky = Ponechat okno vždy nahoře
+window-menu-sticky = Přilepené okno
 window-menu-close = Zavřít
 window-menu-close-all = Zavřít všechna okna
 window-menu-resize-edge-top = Nahoře
