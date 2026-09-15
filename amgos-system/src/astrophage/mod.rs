@@ -1,24 +1,28 @@
 //! Astrophage Continuous Rolling Event Buffer (Process 1 Core)
 //!
-//! Maintains an in-memory ring buffer (up to 10,000 events) capturing
-//! hardware health, thermal events, crashes, and performance metrics.
+//! Maintains rolling 10,000-entry ring buffer in Process 1.
+//! Samples live Linux kernel logs via /dev/kmsg, tracks Pressure Stall Information (PSI),
+//! and records hardware health, thermal events, crashes, and performance metrics.
+
+pub use astrophage_core::{
+    AstrophageBuffer, DiagnosticReportBuilder, KmsgReader, NvmeStatReport, PressureMetrics,
+    PsiMonitor, StorageHealthMonitor, SystemPsiReport, DEFAULT_MAX_LOG_ENTRIES,
+};
 
 use amgos_protocol::ebus::{AstrophageLevel, AstrophageRecord};
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
-pub const RING_BUFFER_CAPACITY: usize = 10_000;
+pub const RING_BUFFER_CAPACITY: usize = DEFAULT_MAX_LOG_ENTRIES;
 
 #[derive(Clone)]
 pub struct AstrophageCoreLogger {
-    buffer: Arc<Mutex<VecDeque<AstrophageRecord>>>,
+    inner: Arc<AstrophageBuffer>,
 }
 
 impl AstrophageCoreLogger {
     pub fn new() -> Self {
         Self {
-            buffer: Arc::new(Mutex::new(VecDeque::with_capacity(RING_BUFFER_CAPACITY))),
+            inner: Arc::new(AstrophageBuffer::new(RING_BUFFER_CAPACITY)),
         }
     }
 
@@ -29,38 +33,40 @@ impl AstrophageCoreLogger {
         message: &str,
         metric: Option<(&str, f64)>,
     ) {
-        let now_ns = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos() as u64)
-            .unwrap_or(0);
-
-        let record = AstrophageRecord {
-            timestamp_ns: now_ns,
-            level,
-            subsystem: subsystem.to_string(),
-            message: message.to_string(),
-            metric_key: metric.map(|(k, _)| k.to_string()),
-            metric_value: metric.map(|(_, v)| v),
-        };
-
-        if let Ok(mut buf) = self.buffer.lock() {
-            if buf.len() >= RING_BUFFER_CAPACITY {
-                buf.pop_front();
-            }
-            buf.push_back(record);
+        if let Some((k, v)) = metric {
+            self.inner.record_metric(level, subsystem, message, k, v);
+        } else {
+            self.inner.record(level, subsystem, message);
         }
     }
 
     pub fn snapshot(&self, limit: usize) -> Vec<AstrophageRecord> {
-        if let Ok(buf) = self.buffer.lock() {
-            let start = if buf.len() > limit {
-                buf.len() - limit
-            } else {
-                0
-            };
-            buf.iter().skip(start).cloned().collect()
-        } else {
-            Vec::new()
+        self.inner.get_recent(limit)
+    }
+
+    pub fn poll_kmsg(&self, max_lines: usize) {
+        let records = KmsgReader::read_available(max_lines);
+        for r in records {
+            self.inner.record(r.level, &r.subsystem, &r.message);
+        }
+    }
+
+    pub fn sample_psi(&self) {
+        if let Ok(report) = PsiMonitor::read_pressure() {
+            self.inner.record_metric(
+                AstrophageLevel::Debug,
+                "psi-cpu",
+                "CPU stall pressure",
+                "avg10",
+                report.cpu_some.avg10 as f64,
+            );
+            self.inner.record_metric(
+                AstrophageLevel::Debug,
+                "psi-memory",
+                "Memory stall pressure",
+                "avg10",
+                report.memory_some.avg10 as f64,
+            );
         }
     }
 }

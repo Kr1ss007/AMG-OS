@@ -100,6 +100,63 @@ pub struct InspectionReport {
     pub security_notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputDeviceType {
+    Keyboard,
+    Touchpad,
+    Mouse,
+    Touchscreen,
+    Switch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputDeviceInfo {
+    pub sysfs_name: String,
+    pub event_node: String,
+    pub device_type: InputDeviceType,
+    pub vendor_id: u16,
+    pub product_id: u16,
+    pub is_multitouch: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TouchpadConfig {
+    pub tap_to_click: bool,
+    pub natural_scrolling: bool,
+    pub pointer_speed: f32, // -1.0 to 1.0
+    pub palm_rejection: bool,
+    pub two_finger_scroll: bool,
+}
+
+impl Default for TouchpadConfig {
+    fn default() -> Self {
+        Self {
+            tap_to_click: true,
+            natural_scrolling: true,
+            pointer_speed: 0.0,
+            palm_rejection: true,
+            two_finger_scroll: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyboardConfig {
+    pub repeat_rate_hz: u32,
+    pub repeat_delay_ms: u32,
+    pub layout: String,
+}
+
+impl Default for KeyboardConfig {
+    fn default() -> Self {
+        Self {
+            repeat_rate_hz: 30,
+            repeat_delay_ms: 250,
+            layout: "us".to_string(),
+        }
+    }
+}
+
 /// Events emitted by Process 1 (System Session) across e-bus
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SystemEvent {
@@ -204,6 +261,32 @@ pub enum SystemEvent {
         success: bool,
         error_message: Option<String>,
     },
+
+    /// Emitted when input hardware topology changes
+    InputDevicesChanged {
+        devices: Vec<InputDeviceInfo>,
+    },
+
+    /// Emitted when touchpad configuration is updated
+    TouchpadConfigChanged(TouchpadConfig),
+
+    /// Emitted when keyboard configuration is updated
+    KeyboardConfigChanged(KeyboardConfig),
+
+    /// Emitted by eo-bus bridge when a foreign application updates its top-bar menu
+    ForeignAppMenuUpdated {
+        app_id: String,
+        menu_json: String,
+    },
+
+    /// Emitted by eo-bus bridge when a desktop notification is dispatched by a third-party app
+    NotificationDispatched {
+        notification_id: u64,
+        app_id: String,
+        title: String,
+        body: String,
+        urgency: u8,
+    },
 }
 
 /// Requests dispatched by Process 2 (Desktop Session) to Process 1 across e-bus
@@ -251,4 +334,16 @@ pub enum DesktopRequest {
         config_payload: Vec<u8>,
         hmac_signature: [u8; 32],
     },
+
+    /// Request enumeration of input devices
+    GetInputDevices,
+
+    /// Update touchpad configuration in Process 1
+    SetTouchpadConfig(TouchpadConfig),
+
+    /// Update keyboard configuration in Process 1
+    SetKeyboardConfig(KeyboardConfig),
+
+    /// Dismiss notification in Process 1
+    DismissNotification { notification_id: u64 },
 }

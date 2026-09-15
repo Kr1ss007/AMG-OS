@@ -226,7 +226,7 @@ impl InotifyWatcher {
 
 impl Drop for InotifyWatcher {
     fn drop(&mut self) {
-        for (&wd, _) in &self.watch_descriptors {
+        for &wd in self.watch_descriptors.keys() {
             unsafe {
                 libc::inotify_rm_watch(self.fd, wd);
             }

@@ -133,11 +133,13 @@ fn detect_local_ip_address() -> Option<String> {
             let line = lines[i].trim();
             if line.starts_with("|--") {
                 let ip_str = line.trim_start_matches("|--").trim();
-                if (i + 1) < lines.len() && lines[i + 1].contains("/32 host LOCAL") {
-                    if ip_str != "127.0.0.1" && !ip_str.starts_with("192.168.122.") {
-                        candidate_ip = Some(ip_str.to_string());
-                        break;
-                    }
+                if (i + 1) < lines.len()
+                    && lines[i + 1].contains("/32 host LOCAL")
+                    && ip_str != "127.0.0.1"
+                    && !ip_str.starts_with("192.168.122.")
+                {
+                    candidate_ip = Some(ip_str.to_string());
+                    break;
                 }
             }
         }

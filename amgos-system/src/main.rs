@@ -18,7 +18,9 @@ use amgos_protocol::ebus::{
 use amgos_system::astrophage::AstrophageCoreLogger;
 use amgos_system::avm::{self, AudioVideoManager};
 use amgos_system::ebus::{EventBusServer, DEFAULT_EBUS_SOCKET_PATH};
+use amgos_system::eobus::EventOutsiderBusBridge;
 use amgos_system::hardware::{self, detect_hardware};
+use amgos_system::motionwave::MotionWaveController;
 use amgos_system::network::NetworkCredentialVault;
 use amgos_system::permissions::PermissionManager;
 use amgos_system::power::PowerManager;
@@ -71,10 +73,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let avm = Arc::new(AudioVideoManager::new());
     avm.mark_audio_hardware_ready();
 
-    // 4. Network Vault & Power Manager & Permission Manager
+    // 4. Network Vault & Power Manager & Permission Manager & MotionWave & eo-bus Bridge
     let network = Arc::new(NetworkCredentialVault::new());
     let power = Arc::new(PowerManager::new());
     let permissions = Arc::new(PermissionManager::new());
+    let motionwave = Arc::new(MotionWaveController::new());
+    let eobus = Arc::new(EventOutsiderBusBridge::new());
 
     // 5. Filer Core: Pathfinder Index & App Layer Manager
     let pathfinder = Arc::new(Mutex::new(PathfinderIndex::new()));
@@ -111,6 +115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(("temp_celsius", temp as f64)),
             );
         }
+        astro_sampler.poll_kmsg(20);
+        astro_sampler.sample_psi();
     });
 
     // 8. Publish initial system bootstrap events
@@ -135,6 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "[amgos-system] AVM Chime Sequencer triggered: Note {} ({:.2} Hz, duration {} ms)",
             chime.note, chime.frequency_hz, chime.duration_ms
         );
+        let _ = avm.play_boot_chime_hardware();
         let chime_event = SystemEvent::BootChimeTrigger {
             timestamp_ns: now_ns(),
             note: chime.note,
@@ -341,6 +348,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     hmac_signature,
                 } => {
                     let _ = permissions.apply_config(&config_payload, &hmac_signature);
+                }
+
+                DesktopRequest::GetInputDevices => {
+                    let devices = motionwave.enumerate_devices().unwrap_or_default();
+                    let _ = ebus_server.publish_event(&SystemEvent::InputDevicesChanged { devices });
+                }
+
+                DesktopRequest::SetTouchpadConfig(config) => {
+                    motionwave.set_touchpad_config(config.clone());
+                    let _ = ebus_server.publish_event(&SystemEvent::TouchpadConfigChanged(config));
+                }
+
+                DesktopRequest::SetKeyboardConfig(config) => {
+                    motionwave.set_keyboard_config(config.clone());
+                    let _ = ebus_server.publish_event(&SystemEvent::KeyboardConfigChanged(config));
+                }
+
+                DesktopRequest::DismissNotification { notification_id } => {
+                    eobus.dismiss_notification(notification_id);
                 }
             }
         }

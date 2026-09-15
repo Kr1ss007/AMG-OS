@@ -302,7 +302,7 @@ impl PathfinderIndex {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "desktop") {
+                    if path.extension().is_some_and(|e| e == "desktop") {
                         if let Ok(content) = fs::read_to_string(&path) {
                             if let Some(doc) = parse_desktop_file(&path, &content) {
                                 self.add_entry(doc);

@@ -9,4 +9,6 @@ license.workspace = true
 astrophage-protocol = { path = "../protocol" }
 amgos-protocol = { path = "../../amgos-protocol" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 bincode = { workspace = true }
+libc = { workspace = true }

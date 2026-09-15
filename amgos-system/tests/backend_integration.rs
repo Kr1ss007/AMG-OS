@@ -42,6 +42,10 @@ fn test_process1_backend_daemon_dispatch_loop() {
     let nw_clone = Arc::clone(&network);
     let as_clone = Arc::clone(&astrophage);
 
+    let motionwave = Arc::new(amgos_system::motionwave::MotionWaveController::new());
+    let mw_clone = Arc::clone(&motionwave);
+    let _ap_clone = Arc::clone(&_app_layer);
+
     // Spawn Process 1 background dispatcher
     let server_handle = thread::spawn(move || {
         while run_clone.load(Ordering::SeqCst) {
@@ -105,6 +109,30 @@ fn test_process1_backend_daemon_dispatch_loop() {
                         let _ = srv_clone.publish_event(&SystemEvent::AstrophageBufferSnapshot {
                             entries,
                         });
+                    }
+
+                    DesktopRequest::GetInputDevices => {
+                        let devices = mw_clone.enumerate_devices().unwrap_or_default();
+                        let _ = srv_clone.publish_event(&SystemEvent::InputDevicesChanged { devices });
+                    }
+
+                    DesktopRequest::SetTouchpadConfig(config) => {
+                        mw_clone.set_touchpad_config(config.clone());
+                        let _ = srv_clone.publish_event(&SystemEvent::TouchpadConfigChanged(config));
+                    }
+
+                    DesktopRequest::SetKeyboardConfig(config) => {
+                        mw_clone.set_keyboard_config(config.clone());
+                        let _ = srv_clone.publish_event(&SystemEvent::KeyboardConfigChanged(config));
+                    }
+
+                    DesktopRequest::InspectPackage { package_path } => {
+                        if let Ok(report) = filer_core::PackageInspector::inspect(&package_path) {
+                            let _ = srv_clone.publish_event(&SystemEvent::PackageInspected {
+                                package_path,
+                                report,
+                            });
+                        }
                     }
 
                     _ => {}
@@ -213,6 +241,60 @@ fn test_process1_backend_daemon_dispatch_loop() {
             // Valid response received
         }
         other => panic!("Expected AstrophageBufferSnapshot, got {:?}", other),
+    }
+
+    // 6. Test MotionWave Input Devices Enumeration
+    client
+        .send_request(&DesktopRequest::GetInputDevices)
+        .expect("Send get input devices failed");
+
+    let event6 = client.read_event().expect("Read event failed");
+    match event6 {
+        SystemEvent::InputDevicesChanged { devices } => {
+            // Devices enumerated from /proc/bus/input/devices on host
+            assert!(!devices.is_empty(), "Should detect host keyboard and touchpad");
+        }
+        other => panic!("Expected InputDevicesChanged, got {:?}", other),
+    }
+
+    // 7. Test MotionWave Touchpad Configuration Update
+    let custom_tp = amgos_protocol::ebus::TouchpadConfig {
+        tap_to_click: true,
+        natural_scrolling: true,
+        pointer_speed: 0.5,
+        palm_rejection: true,
+        two_finger_scroll: true,
+    };
+    client
+        .send_request(&DesktopRequest::SetTouchpadConfig(custom_tp.clone()))
+        .expect("Send set touchpad config failed");
+
+    let event7 = client.read_event().expect("Read event failed");
+    match event7 {
+        SystemEvent::TouchpadConfigChanged(cfg) => {
+            assert_eq!(cfg.pointer_speed, 0.5);
+            assert!(cfg.tap_to_click);
+        }
+        other => panic!("Expected TouchpadConfigChanged, got {:?}", other),
+    }
+
+    // 8. Test MotionWave Keyboard Configuration Update
+    let custom_kbd = amgos_protocol::ebus::KeyboardConfig {
+        repeat_rate_hz: 40,
+        repeat_delay_ms: 200,
+        layout: "us".to_string(),
+    };
+    client
+        .send_request(&DesktopRequest::SetKeyboardConfig(custom_kbd.clone()))
+        .expect("Send set keyboard config failed");
+
+    let event8 = client.read_event().expect("Read event failed");
+    match event8 {
+        SystemEvent::KeyboardConfigChanged(cfg) => {
+            assert_eq!(cfg.repeat_rate_hz, 40);
+            assert_eq!(cfg.repeat_delay_ms, 200);
+        }
+        other => panic!("Expected KeyboardConfigChanged, got {:?}", other),
     }
 
     // Clean shutdown

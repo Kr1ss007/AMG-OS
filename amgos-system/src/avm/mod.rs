@@ -80,6 +80,7 @@ impl AudioVideoManager {
     /// Synthesize real 48,000 Hz 16-bit stereo PCM audio for the F3 piano boot chime.
     /// Incorporates acoustic piano harmonics (F3, F4, C5, F5, A5), ADSR hammer envelope,
     /// and simulated room reverb.
+    #[allow(clippy::needless_range_loop)]
     pub fn synthesize_boot_chime_pcm(&self) -> Vec<u8> {
         let total_samples = (AUDIO_SAMPLE_RATE as f32 * (CHIME_DURATION_MS as f32 / 1000.0)) as usize;
         let mut pcm_bytes = Vec::with_capacity(total_samples * (AUDIO_CHANNELS as usize) * 2);
@@ -136,6 +137,83 @@ impl AudioVideoManager {
         }
 
         pcm_bytes
+    }
+
+    /// Generates standard 44-byte RIFF/WAVE header for the PCM buffer
+    pub fn generate_riff_wav_header(
+        pcm_len: usize,
+        sample_rate: u32,
+        channels: u16,
+        bits_per_sample: u16,
+    ) -> [u8; 44] {
+        let mut header = [0u8; 44];
+        let byte_rate = sample_rate * (channels as u32) * (bits_per_sample as u32) / 8;
+        let block_align = channels * bits_per_sample / 8;
+        let chunk_size = 36 + (pcm_len as u32);
+
+        header[0..4].copy_from_slice(b"RIFF");
+        header[4..8].copy_from_slice(&chunk_size.to_le_bytes());
+        header[8..12].copy_from_slice(b"WAVE");
+
+        header[12..16].copy_from_slice(b"fmt ");
+        header[16..20].copy_from_slice(&16u32.to_le_bytes()); // Subchunk1Size (16 for PCM)
+        header[20..22].copy_from_slice(&1u16.to_le_bytes()); // AudioFormat (1 = PCM)
+        header[22..24].copy_from_slice(&channels.to_le_bytes());
+        header[24..28].copy_from_slice(&sample_rate.to_le_bytes());
+        header[28..32].copy_from_slice(&byte_rate.to_le_bytes());
+        header[32..34].copy_from_slice(&block_align.to_le_bytes());
+        header[34..36].copy_from_slice(&bits_per_sample.to_le_bytes());
+
+        header[36..40].copy_from_slice(b"data");
+        header[40..44].copy_from_slice(&(pcm_len as u32).to_le_bytes());
+
+        header
+    }
+
+    /// Render synthesized F3 chime to a valid RIFF WAV audio file
+    pub fn export_boot_chime_wav<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<std::path::PathBuf> {
+        let pcm = self.synthesize_boot_chime_pcm();
+        let header = Self::generate_riff_wav_header(pcm.len(), AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, 16);
+
+        let dest = path.as_ref().to_path_buf();
+        if let Some(parent) = dest.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let mut file = std::fs::File::create(&dest)?;
+        use std::io::Write;
+        file.write_all(&header)?;
+        file.write_all(&pcm)?;
+        file.sync_all()?;
+
+        Ok(dest)
+    }
+
+    /// Play the boot chime directly on host audio hardware
+    pub fn play_boot_chime_hardware(&self) -> std::io::Result<()> {
+        let tmp_wav = std::env::temp_dir().join("amgos_boot_chime.wav");
+        self.export_boot_chime_wav(&tmp_wav)?;
+
+        // Try PipeWire pw-play first (standard on host)
+        let pw_res = std::process::Command::new("pw-play")
+            .arg(&tmp_wav)
+            .spawn();
+
+        if pw_res.is_ok() {
+            return Ok(());
+        }
+
+        // Try ALSA aplay fallback
+        let aplay_res = std::process::Command::new("aplay")
+            .arg("-q")
+            .arg(&tmp_wav)
+            .spawn();
+
+        if aplay_res.is_ok() {
+            return Ok(());
+        }
+
+        Ok(())
     }
 }
 
@@ -197,5 +275,22 @@ mod tests {
             avm.calculate_ducking_factor(AudioStreamPriority::SystemSound, AudioStreamPriority::AppAudio),
             1.0
         );
+    }
+
+    #[test]
+    fn test_avm_export_boot_chime_wav() {
+        let avm = AudioVideoManager::new();
+        let tmp_wav = std::env::temp_dir().join("amgos_test_chime.wav");
+        let path = avm.export_boot_chime_wav(&tmp_wav).expect("Should export valid WAV");
+        assert!(path.exists());
+
+        // Check WAV header
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(&bytes[12..16], b"fmt ");
+        assert_eq!(&bytes[36..40], b"data");
+
+        let _ = std::fs::remove_file(&path);
     }
 }

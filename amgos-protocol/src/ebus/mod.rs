@@ -11,7 +11,8 @@ pub use frame::{
     FrameHeader, EBUS_MAGIC, EBUS_PROTOCOL_VERSION,
 };
 pub use messages::{
-    AstrophageLevel, AstrophageRecord, DesktopRequest, InspectionReport, InstallStage,
-    PathfinderCategory, PathfinderItem, PowerProfile, PowerState, ProtocolFileEntry, SystemEvent,
+    AstrophageLevel, AstrophageRecord, DesktopRequest, InputDeviceInfo, InputDeviceType,
+    InspectionReport, InstallStage, KeyboardConfig, PathfinderCategory, PathfinderItem,
+    PowerProfile, PowerState, ProtocolFileEntry, SystemEvent, TouchpadConfig,
 };
 pub use transport::{EventBusClient, EventBusServer, DEFAULT_EBUS_SOCKET_PATH};
