@@ -380,12 +380,33 @@ impl DiagnosticReportBuilder {
 /// Removes home directories and usernames to maintain strict privacy
 fn sanitize_text(input: &str) -> String {
     let mut out = input.to_string();
+
+    // 1. Sanitize any current $USER env var
     if let Ok(user) = std::env::var("USER") {
         if !user.is_empty() {
             out = out.replace(&format!("/home/{}", user), "/home/[USER]");
             out = out.replace(&user, "[USER]");
         }
     }
+
+    // 2. Sanitize any remaining /home/<username> path pattern
+    let mut search_from = 0;
+    while let Some(idx) = out[search_from..].find("/home/") {
+        let abs_idx = search_from + idx;
+        let after = &out[abs_idx + 6..];
+        let end = after
+            .find(|c: char| !c.is_alphanumeric() && c != '_' && c != '-')
+            .unwrap_or(after.len());
+        let username = &after[..end];
+        if username == "[USER]" || username.is_empty() {
+            search_from = abs_idx + 6 + username.len();
+            continue;
+        }
+        let target = format!("/home/{}", username);
+        out = out.replace(&target, "/home/[USER]");
+        search_from = abs_idx + 12; // Length of "/home/[USER]"
+    }
+
     out
 }
 
