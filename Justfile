@@ -10,6 +10,13 @@ default: check
 check:
     cargo check --workspace --all-targets
 
+# Verify local git forks tracking and divergence logs
+check-forks:
+    bash scripts/delta.sh
+
+# Run full verification (forks, check, lint, test)
+verify: check-forks check lint test
+
 # Build release artifacts for the entire workspace
 build:
     cargo build --workspace --release

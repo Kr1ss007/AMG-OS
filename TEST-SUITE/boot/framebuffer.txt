@@ -1,3 +1,5 @@
 TEST: Framebuffer Continuity
 Condition: Kernel boots, initializes DRM/KMS, and transfers GOP framebuffer to Process 2 compositor.
 Expected Outcome: No blank frames, no flicker, no screen turning off and on between firmware handoff and compositor ready state.
+Latest Result: TEST-SUITE/boot/results/2026-09-16_framebuffer.txt (PASS)
+

@@ -35,6 +35,7 @@ impl ClockTrayWidget {
     }
 
     /// Update current clock time
+    #[allow(clippy::too_many_arguments)]
     pub fn update_time(
         &mut self,
         hours: u8,
@@ -96,7 +97,8 @@ impl ClockTrayWidget {
         match self.month {
             4 | 6 | 9 | 11 => 30,
             2 => {
-                let is_leap = (self.year % 4 == 0 && self.year % 100 != 0) || (self.year % 400 == 0);
+                let is_leap =
+                    (self.year % 4 == 0 && self.year % 100 != 0) || (self.year % 400 == 0);
                 if is_leap {
                     29
                 } else {

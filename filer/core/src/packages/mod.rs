@@ -7,7 +7,7 @@
 //! App Layer partition (/var/lib/amgos/apps).
 //! Zero modifications to the read-only base image.
 
-use amgos_protocol::ebus::{InstallStage, InspectionReport};
+use amgos_protocol::ebus::{InspectionReport, InstallStage};
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -91,18 +91,23 @@ impl PackageInspector {
                     architecture = deb_meta.architecture;
                 }
                 if !deb_meta.depends.is_empty() {
-                    declared_permissions.push(format!("Dependencies: {}", deb_meta.depends.join(", ")));
+                    declared_permissions
+                        .push(format!("Dependencies: {}", deb_meta.depends.join(", ")));
                 }
                 if !deb_meta.description.is_empty() {
                     security_notes.push(format!("Description: {}", deb_meta.description));
                 }
             }
             declared_permissions.push("Standard Application Runtime".to_string());
-            security_notes.push("Sandboxed into App Layer prefix; base image untouched".to_string());
+            security_notes
+                .push("Sandboxed into App Layer prefix; base image untouched".to_string());
         } else if format == "appimage" {
             if let Ok(elf_info) = inspect_elf_header(path) {
                 architecture = elf_info.architecture;
-                security_notes.push(format!("ELF Type: {}, Machine: {}", elf_info.elf_type, elf_info.machine));
+                security_notes.push(format!(
+                    "ELF Type: {}, Machine: {}",
+                    elf_info.elf_type, elf_info.machine
+                ));
             }
             declared_permissions.push("Userland Display Access".to_string());
             declared_permissions.push("Local File Access".to_string());
@@ -143,7 +148,10 @@ fn inspect_elf_header(path: &Path) -> Result<ElfHeaderInfo, io::Error> {
     file.read_exact(&mut header)?;
 
     if &header[0..4] != ELF_MAGIC {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a valid ELF binary"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not a valid ELF binary",
+        ));
     }
 
     let class = header[4]; // 1 = 32-bit, 2 = 64-bit
@@ -160,7 +168,8 @@ fn inspect_elf_header(path: &Path) -> Result<ElfHeaderInfo, io::Error> {
         3 => "Shared object (PIE)",
         4 => "Core",
         _ => "Unknown",
-    }.to_string();
+    }
+    .to_string();
 
     let machine = u16::from_le_bytes([header[18], header[19]]);
     let machine_str = match machine {
@@ -168,7 +177,8 @@ fn inspect_elf_header(path: &Path) -> Result<ElfHeaderInfo, io::Error> {
         0x3E => "x86-64 (AMD64)",
         0xB7 => "ARM 64-bit (AArch64)",
         _ => "Other",
-    }.to_string();
+    }
+    .to_string();
 
     Ok(ElfHeaderInfo {
         architecture: arch,
@@ -184,7 +194,10 @@ pub fn parse_deb_package(path: &Path) -> Result<DebControlMeta, io::Error> {
     file.read_exact(&mut magic)?;
 
     if &magic != AR_MAGIC {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a valid ar/deb archive"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not a valid ar/deb archive",
+        ));
     }
 
     // Traverse 60-byte ar headers
@@ -196,12 +209,8 @@ pub fn parse_deb_package(path: &Path) -> Result<DebControlMeta, io::Error> {
             Err(e) => return Err(e),
         }
 
-        let name_raw = std::str::from_utf8(&header[0..16])
-            .unwrap_or("")
-            .trim();
-        let size_str = std::str::from_utf8(&header[48..58])
-            .unwrap_or("")
-            .trim();
+        let name_raw = std::str::from_utf8(&header[0..16]).unwrap_or("").trim();
+        let size_str = std::str::from_utf8(&header[48..58]).unwrap_or("").trim();
         let size: u64 = size_str.parse().unwrap_or(0);
 
         let clean_name = name_raw.trim_end_matches('/');
@@ -507,7 +516,10 @@ impl AppLayerManager {
             fs::remove_dir_all(app_dir)?;
         }
 
-        let desktop_file = self.root_dir.join("desktop").join(format!("{clean_id}.desktop"));
+        let desktop_file = self
+            .root_dir
+            .join("desktop")
+            .join(format!("{clean_id}.desktop"));
         if desktop_file.exists() {
             let _ = fs::remove_file(desktop_file);
         }
@@ -529,7 +541,10 @@ fn extract_deb_data_archive(deb_path: &Path, dest_dir: &Path) -> Result<Vec<Stri
     file.read_exact(&mut magic)?;
 
     if &magic != AR_MAGIC {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a valid ar archive"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Not a valid ar archive",
+        ));
     }
 
     let mut extracted_files = Vec::new();
@@ -671,12 +686,28 @@ mod tests {
 
             // debian-binary member
             let deb_bin = b"2.0\n";
-            let header = format!("{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n", "debian-binary", "1700000000", "0", "0", "100644", deb_bin.len());
+            let header = format!(
+                "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
+                "debian-binary",
+                "1700000000",
+                "0",
+                "0",
+                "100644",
+                deb_bin.len()
+            );
             deb_file.write_all(header.as_bytes()).unwrap();
             deb_file.write_all(deb_bin).unwrap();
 
             // control.tar.gz member
-            let header = format!("{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n", "control.tar.gz", "1700000000", "0", "0", "100644", control_gz_bytes.len());
+            let header = format!(
+                "{:<16}{:<12}{:<6}{:<6}{:<8}{:<10}`\n",
+                "control.tar.gz",
+                "1700000000",
+                "0",
+                "0",
+                "100644",
+                control_gz_bytes.len()
+            );
             deb_file.write_all(header.as_bytes()).unwrap();
             deb_file.write_all(&control_gz_bytes).unwrap();
             if control_gz_bytes.len() % 2 == 1 {
@@ -685,7 +716,8 @@ mod tests {
         }
 
         // Run real PackageInspector
-        let report = PackageInspector::inspect(&deb_path).expect("Debian inspection should succeed");
+        let report =
+            PackageInspector::inspect(&deb_path).expect("Debian inspection should succeed");
         assert_eq!(report.package_name, "amgos-demo");
         assert_eq!(report.version, "2.5.1");
         assert_eq!(report.architecture, "amd64");
@@ -704,10 +736,13 @@ mod tests {
 
         let pkg_path = tmp_app_layer.join("testapp.appimage");
         let mut f = File::create(&pkg_path).unwrap();
-        f.write_all(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00").unwrap();
+        f.write_all(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00")
+            .unwrap();
         f.sync_all().unwrap();
 
-        let app_id = manager.install_package(&pkg_path, |_stage, _pct| {}).unwrap();
+        let app_id = manager
+            .install_package(&pkg_path, |_stage, _pct| {})
+            .unwrap();
         assert_eq!(app_id, "testapp");
         assert!(manager.is_installed(&app_id));
 
@@ -728,9 +763,11 @@ mod tests {
 
     #[test]
     fn test_inspect_real_host_deb_if_present() {
-        let deb_path = Path::new("/var/cache/apt/archives/accountsservice_23.13.9-2ubuntu6.1_amd64.deb");
+        let deb_path =
+            Path::new("/var/cache/apt/archives/accountsservice_23.13.9-2ubuntu6.1_amd64.deb");
         if deb_path.exists() {
-            let report = PackageInspector::inspect(deb_path).expect("Should inspect real system deb");
+            let report =
+                PackageInspector::inspect(deb_path).expect("Should inspect real system deb");
             assert_eq!(report.package_name, "accountsservice");
             assert_eq!(report.version, "23.13.9-2ubuntu6.1");
             assert_eq!(report.architecture, "amd64");

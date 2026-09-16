@@ -123,10 +123,7 @@ impl PtySession {
 
     pub fn is_alive(&mut self) -> bool {
         if let Some(ref mut child) = self.child {
-            match child.try_wait() {
-                Ok(None) => true,
-                _ => false,
-            }
+            matches!(child.try_wait(), Ok(None))
         } else {
             false
         }

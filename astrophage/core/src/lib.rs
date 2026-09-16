@@ -81,7 +81,14 @@ impl AstrophageBuffer {
         queue.push_back(record);
     }
 
-    pub fn record_metric(&self, level: AstrophageLevel, subsystem: &str, message: &str, key: &str, value: f64) {
+    pub fn record_metric(
+        &self,
+        level: AstrophageLevel,
+        subsystem: &str,
+        message: &str,
+        key: &str,
+        value: f64,
+    ) {
         let timestamp_ns = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -155,7 +162,10 @@ impl KmsgReader {
 
         unsafe {
             let c_path = std::ffi::CString::new(KMSG_DEVICE_PATH).unwrap();
-            let fd = libc::open(c_path.as_ptr(), libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC);
+            let fd = libc::open(
+                c_path.as_ptr(),
+                libc::O_RDONLY | libc::O_NONBLOCK | libc::O_CLOEXEC,
+            );
             if fd < 0 {
                 return records;
             }
@@ -236,8 +246,12 @@ impl PsiMonitor {
 
     fn parse_psi_line(path_str: &str, prefix: &str) -> io::Result<PressureMetrics> {
         let content = fs::read_to_string(path_str)?;
-        Self::parse_psi_text(&content, prefix)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("Failed to parse {}", path_str)))
+        Self::parse_psi_text(&content, prefix).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to parse {}", path_str),
+            )
+        })
     }
 
     pub fn parse_psi_text(text: &str, target_prefix: &str) -> Option<PressureMetrics> {
@@ -430,7 +444,10 @@ mod tests {
     fn test_sanitized_github_issue_generation() {
         let buffer = AstrophageBuffer::new(10);
         buffer.record(AstrophageLevel::Warning, "thermal", "CPU Package temp 72C");
-        let issue = DiagnosticReportBuilder::build_github_issue("Issue observed in /home/raven1zed/test", &buffer);
+        let issue = DiagnosticReportBuilder::build_github_issue(
+            "Issue observed in /home/raven1zed/test",
+            &buffer,
+        );
         assert!(issue.os_version.contains("Upstream Color"));
         assert!(!issue.user_description.contains("/home/raven1zed"));
         assert!(issue.user_description.contains("/home/[USER]"));

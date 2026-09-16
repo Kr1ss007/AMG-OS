@@ -82,7 +82,8 @@ impl AudioVideoManager {
     /// and simulated room reverb.
     #[allow(clippy::needless_range_loop)]
     pub fn synthesize_boot_chime_pcm(&self) -> Vec<u8> {
-        let total_samples = (AUDIO_SAMPLE_RATE as f32 * (CHIME_DURATION_MS as f32 / 1000.0)) as usize;
+        let total_samples =
+            (AUDIO_SAMPLE_RATE as f32 * (CHIME_DURATION_MS as f32 / 1000.0)) as usize;
         let mut pcm_bytes = Vec::with_capacity(total_samples * (AUDIO_CHANNELS as usize) * 2);
 
         let f0 = CHIME_FREQUENCY_HZ;
@@ -171,9 +172,13 @@ impl AudioVideoManager {
     }
 
     /// Render synthesized F3 chime to a valid RIFF WAV audio file
-    pub fn export_boot_chime_wav<P: AsRef<std::path::Path>>(&self, path: P) -> std::io::Result<std::path::PathBuf> {
+    pub fn export_boot_chime_wav<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> std::io::Result<std::path::PathBuf> {
         let pcm = self.synthesize_boot_chime_pcm();
-        let header = Self::generate_riff_wav_header(pcm.len(), AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, 16);
+        let header =
+            Self::generate_riff_wav_header(pcm.len(), AUDIO_SAMPLE_RATE, AUDIO_CHANNELS, 16);
 
         let dest = path.as_ref().to_path_buf();
         if let Some(parent) = dest.parent() {
@@ -195,9 +200,7 @@ impl AudioVideoManager {
         self.export_boot_chime_wav(&tmp_wav)?;
 
         // Try PipeWire pw-play first (standard on host)
-        let pw_res = std::process::Command::new("pw-play")
-            .arg(&tmp_wav)
-            .spawn();
+        let pw_res = std::process::Command::new("pw-play").arg(&tmp_wav).spawn();
 
         if pw_res.is_ok() {
             return Ok(());
@@ -245,7 +248,9 @@ mod tests {
         avm.mark_audio_hardware_ready();
         assert!(avm.is_audio_ready());
 
-        let chime = avm.evaluate_chime_sequencer().expect("Chime should trigger on hardware ready");
+        let chime = avm
+            .evaluate_chime_sequencer()
+            .expect("Chime should trigger on hardware ready");
         assert_eq!(chime.note, "F3");
         assert!((chime.frequency_hz - 174.614).abs() < 0.01);
         assert_eq!(chime.sample_rate, 48000);
@@ -264,15 +269,24 @@ mod tests {
     fn test_avm_stream_ducking() {
         let avm = AudioVideoManager::new();
         assert_eq!(
-            avm.calculate_ducking_factor(AudioStreamPriority::MediaMusicVideo, AudioStreamPriority::BootChime),
+            avm.calculate_ducking_factor(
+                AudioStreamPriority::MediaMusicVideo,
+                AudioStreamPriority::BootChime
+            ),
             0.0
         );
         assert_eq!(
-            avm.calculate_ducking_factor(AudioStreamPriority::MediaMusicVideo, AudioStreamPriority::SystemSound),
+            avm.calculate_ducking_factor(
+                AudioStreamPriority::MediaMusicVideo,
+                AudioStreamPriority::SystemSound
+            ),
             0.2
         );
         assert_eq!(
-            avm.calculate_ducking_factor(AudioStreamPriority::SystemSound, AudioStreamPriority::AppAudio),
+            avm.calculate_ducking_factor(
+                AudioStreamPriority::SystemSound,
+                AudioStreamPriority::AppAudio
+            ),
             1.0
         );
     }
@@ -281,7 +295,9 @@ mod tests {
     fn test_avm_export_boot_chime_wav() {
         let avm = AudioVideoManager::new();
         let tmp_wav = std::env::temp_dir().join("amgos_test_chime.wav");
-        let path = avm.export_boot_chime_wav(&tmp_wav).expect("Should export valid WAV");
+        let path = avm
+            .export_boot_chime_wav(&tmp_wav)
+            .expect("Should export valid WAV");
         assert!(path.exists());
 
         // Check WAV header

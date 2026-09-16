@@ -193,8 +193,8 @@ impl SmartDock {
                 // ACCELERATE curve: dock accelerates out of view
                 1.0 - curves::ACCELERATE.solve(self.animation_progress)
             }
-            DockVisibility::Shown => 0.0,   // No offset — fully visible
-            DockVisibility::Hidden => 1.0,  // Fully hidden
+            DockVisibility::Shown => 0.0,  // No offset — fully visible
+            DockVisibility::Hidden => 1.0, // Fully hidden
         }
     }
 
@@ -233,11 +233,12 @@ mod tests {
 
     #[test]
     fn test_dock_shows_on_cursor_near_edge() {
-        let mut dock = SmartDock::default();
-        // Force dock to hidden
-        dock.window_overlapping = true;
-        dock.visibility = DockVisibility::Hidden;
-        dock.animation_progress = 0.0;
+        let mut dock = SmartDock {
+            window_overlapping: true,
+            visibility: DockVisibility::Hidden,
+            animation_progress: 0.0,
+            ..Default::default()
+        };
 
         dock.on_cursor_near_edge(true);
         assert_eq!(dock.visibility, DockVisibility::AnimatingIn);
@@ -268,13 +269,15 @@ mod tests {
 
     #[test]
     fn test_animation_tick() {
-        let mut dock = SmartDock::default();
-        dock.visibility = DockVisibility::AnimatingOut;
-        dock.animation_progress = 1.0;
+        let mut dock = SmartDock {
+            visibility: DockVisibility::AnimatingOut,
+            animation_progress: 1.0,
+            ..Default::default()
+        };
 
         // Advance 500ms — should complete the 220ms animation
         let offset = dock.tick(0.5);
-        assert!(offset >= 0.0 && offset <= 1.0);
+        assert!((0.0..=1.0).contains(&offset));
         assert_eq!(dock.visibility, DockVisibility::Hidden);
     }
 }

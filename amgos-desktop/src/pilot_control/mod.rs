@@ -48,6 +48,7 @@ pub struct WindowThumbnail {
 }
 
 impl WindowThumbnail {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         window_id: u64,
         app_id: &str,
@@ -185,7 +186,10 @@ impl PilotControl {
 
     /// Close Pilot Control
     pub fn hide(&mut self) {
-        if matches!(self.state, PilotControlState::Active | PilotControlState::Entering) {
+        if matches!(
+            self.state,
+            PilotControlState::Active | PilotControlState::Entering
+        ) {
             self.state = PilotControlState::Exiting;
         }
     }
@@ -205,7 +209,10 @@ impl PilotControl {
             return;
         }
 
-        let current_pos = self.desktops.iter().position(|d| d.id == self.active_desktop_id);
+        let current_pos = self
+            .desktops
+            .iter()
+            .position(|d| d.id == self.active_desktop_id);
         let target_pos = self.desktops.iter().position(|d| d.id == target_id);
 
         let direction = match (current_pos, target_pos) {
@@ -233,7 +240,10 @@ impl PilotControl {
         let window = {
             let src = self.desktops.iter_mut().find(|d| d.id == from_desktop_id);
             if let Some(desktop) = src {
-                let pos = desktop.windows.iter().position(|w| w.window_id == window_id);
+                let pos = desktop
+                    .windows
+                    .iter()
+                    .position(|w| w.window_id == window_id);
                 pos.map(|p| desktop.windows.remove(p))
             } else {
                 None
@@ -252,7 +262,11 @@ impl PilotControl {
     }
 
     /// Move window to a new desktop (drag to + icon interaction)
-    pub fn move_window_to_new_desktop(&mut self, window_id: u64, from_desktop_id: DesktopId) -> DesktopId {
+    pub fn move_window_to_new_desktop(
+        &mut self,
+        window_id: u64,
+        from_desktop_id: DesktopId,
+    ) -> DesktopId {
         let new_id = self.create_desktop();
         self.move_window_to_desktop(window_id, from_desktop_id, new_id);
         self.switch_to(new_id);
@@ -261,7 +275,11 @@ impl PilotControl {
 
     /// Register a window on the active desktop (called by compositor surface manager)
     pub fn on_window_opened(&mut self, window: WindowThumbnail) {
-        if let Some(desktop) = self.desktops.iter_mut().find(|d| d.id == self.active_desktop_id) {
+        if let Some(desktop) = self
+            .desktops
+            .iter_mut()
+            .find(|d| d.id == self.active_desktop_id)
+        {
             desktop.windows.push(window);
         }
     }
@@ -275,7 +293,9 @@ impl PilotControl {
 
     /// Get the currently active desktop
     pub fn active_desktop(&self) -> Option<&VirtualDesktop> {
-        self.desktops.iter().find(|d| d.id == self.active_desktop_id)
+        self.desktops
+            .iter()
+            .find(|d| d.id == self.active_desktop_id)
     }
 
     /// Animate the overlay and desktop transitions. Call every compositor frame.
@@ -330,13 +350,9 @@ impl PilotControl {
         !matches!(self.state, PilotControlState::Hidden)
     }
 
-    /// Render Pilot Control overlay into the compositor framebuffer
-    pub fn render_overlay(
-        &self,
-        display_width: u32,
-        display_height: u32,
-        framebuffer: &mut [u8],
-    ) {
+    /// Renders Pilot Control overlay into the compositor framebuffer
+    #[allow(clippy::chunks_exact_to_as_chunks)]
+    pub fn render_overlay(&self, display_width: u32, display_height: u32, framebuffer: &mut [u8]) {
         if self.state == PilotControlState::Hidden {
             return;
         }
@@ -444,7 +460,9 @@ impl PilotControl {
                         for px in 0..thumb_w.min(pw) {
                             let src_idx = (py * pw + px) * 4;
                             let dst_idx = ((ty + py) * dw + (tx + px)) * 4;
-                            if src_idx + 3 < win.preview_rgba.len() && dst_idx + 3 < framebuffer.len() {
+                            if src_idx + 3 < win.preview_rgba.len()
+                                && dst_idx + 3 < framebuffer.len()
+                            {
                                 framebuffer[dst_idx..dst_idx + 4]
                                     .copy_from_slice(&win.preview_rgba[src_idx..src_idx + 4]);
                             }
@@ -526,7 +544,8 @@ mod tests {
     fn test_window_close_cleanup() {
         let mut pc = PilotControl::new();
         pc.create_desktop();
-        let window = WindowThumbnail::new(3001, "zen-browser", "Zen Browser", 0, 0, 1920, 1080, true);
+        let window =
+            WindowThumbnail::new(3001, "zen-browser", "Zen Browser", 0, 0, 1920, 1080, true);
         pc.on_window_opened(window);
         pc.on_window_closed(3001);
         assert!(pc.desktops.iter().all(|d| d.windows.is_empty()));

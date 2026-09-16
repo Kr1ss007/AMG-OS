@@ -204,7 +204,12 @@ impl PathfinderIndex {
             category: PathfinderCategory::InstallableWeb,
             action_uri: "amgos://install/obs-studio".into(),
             is_installed: false,
-            tokens: vec!["obs".into(), "stream".into(), "record".into(), "video".into()],
+            tokens: vec![
+                "obs".into(),
+                "stream".into(),
+                "record".into(),
+                "video".into(),
+            ],
         });
 
         index.add_entry(SearchDocument {
@@ -214,7 +219,12 @@ impl PathfinderIndex {
             category: PathfinderCategory::InstallableWeb,
             action_uri: "amgos://install/vlc".into(),
             is_installed: false,
-            tokens: vec!["vlc".into(), "video".into(), "media".into(), "player".into()],
+            tokens: vec![
+                "vlc".into(),
+                "video".into(),
+                "media".into(),
+                "player".into(),
+            ],
         });
 
         index.add_entry(SearchDocument {
@@ -224,7 +234,12 @@ impl PathfinderIndex {
             category: PathfinderCategory::InstallableWeb,
             action_uri: "amgos://install/blender".into(),
             is_installed: false,
-            tokens: vec!["blender".into(), "3d".into(), "render".into(), "animation".into()],
+            tokens: vec![
+                "blender".into(),
+                "3d".into(),
+                "render".into(),
+                "animation".into(),
+            ],
         });
 
         index
@@ -470,6 +485,9 @@ mod tests {
         let mut index = PathfinderIndex::new();
         assert!(index.remove_entry("app-terminow"));
         let results = index.query("terminow", 5);
-        assert!(results.is_empty(), "Terminow should be gone from Pathfinder immediately");
+        assert!(
+            results.is_empty(),
+            "Terminow should be gone from Pathfinder immediately"
+        );
     }
 }

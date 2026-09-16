@@ -10,8 +10,10 @@
 //! - Security boundaries & signed permission state
 //! - Service supervisor
 
+pub mod ab_system;
 pub mod astrophage;
 pub mod avm;
+pub mod bluetooth;
 pub mod ebus;
 pub mod eobus;
 pub mod hardware;
@@ -21,8 +23,13 @@ pub mod permissions;
 pub mod power;
 pub mod supervisor;
 
+pub use ab_system::{AbStateRecord, AbUpdateManager, SlotId};
 pub use astrophage::AstrophageCoreLogger;
-pub use avm::{AudioVideoManager, ChimeEvent, AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, CHIME_DURATION_MS, CHIME_FREQUENCY_HZ, CHIME_NOTE};
+pub use avm::{
+    AudioVideoManager, ChimeEvent, AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, CHIME_DURATION_MS,
+    CHIME_FREQUENCY_HZ, CHIME_NOTE,
+};
+pub use bluetooth::{BluetoothManager, InternalBluetoothDevice};
 pub use ebus::{EventBusServer, DEFAULT_EBUS_SOCKET_PATH};
 pub use eobus::EventOutsiderBusBridge;
 pub use hardware::{detect_hardware, HardwareProfile};

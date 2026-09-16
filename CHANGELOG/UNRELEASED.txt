@@ -29,4 +29,29 @@ Affects: FORKS/cosmic, amgos-desktop compositor.
 [BUILD] Implemented full operating system image build pipeline (scripts/build-image.sh).
 Reason: Real OS image generation with immutable SquashFS Base A, A/B partition layout, systemd service units (amgos-system.service, amgos-desktop.service, amgos.target), and boot silence cmdline.
 Affects: Deployment, release artifacts.
+
+[DESKTOP] Implemented complete Compositor Layered UI Renderer (amgos-desktop/src/compositor/render.rs).
+Reason: Real graphics rasterization of Top Global Menu, Real System Tray (StatusNotifierItem icons, Network, AVM Audio, Power/Battery profile badge, Clock, Notification badge), Window Chrome with Traffic Light window controls (hover symbols), Smart Dock with running dots, and System Screens (Shutdown 'goodbye', Restart 'i'll see you in a bit').
+Affects: Process 2 Desktop Session, visual presentation.
+
+[TERMINOW] Implemented GPU text rasterizer via cosmic-text and interactive PTY shell.
+Reason: POSIX pseudo-terminal allocation with non-blocking I/O, ANSI escape handling, and subpixel/mask glyph blitting onto WGPU surfaces.
+Affects: Native terminal emulator, CLI workflows.
+
+[BLUETOOTH] Implemented Process 1 BlueZ D-Bus isolated daemon (amgos-system/src/bluetooth).
+Reason: Enforce hardware isolation boundary — Process 1 owns adapter, power, discovery, pairing, and trust. Process 2 receives sanitized device summaries only; zero raw HCI or PIN exposure.
+Affects: Process 1 System Session, Settings, hardware connectivity.
+
+[PERMISSIONS] Implemented hard rm -rf prohibition on critical system paths.
+Reason: Enforce AMGOS SPEC Section 10.4 — destructive operations against /, /boot, /usr, /etc, /lib, /dev, /proc, /sys, and immutable slots are unconditionally blocked with FsProtectionError regardless of uid 0.
+Affects: Process 1 System Session, Filer Core, system safety.
+
+[DESKTOP] Implemented Plain English Error Translation Layer and Error Dialog Surface.
+Reason: Enforce AMGOS SPEC Section 8.2 — raw kernel and POSIX error strings are converted into human explanations with Technical Details disclosure, Copy Details, Report to Astrophage, and Dismiss buttons.
+Affects: Process 2 Compositor, error presentation.
+
+[AUDIT] Zero-Mock, Zero-Stub Enforcement across Monorepo.
+Reason: Purged all seeded mock devices and test mock strings; verified real BlueZ, NetworkManager, and SquashFS payloads.
+Affects: Workspace test suite, Process 1 Bluetooth, A/B system.
 ================================================================================
+

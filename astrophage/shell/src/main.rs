@@ -15,7 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Hardware Diagnostic Report".to_string()
     };
 
-    let mut builder = DiagnosticReportBuilder::new("Intel Core i5-13420H / NVIDIA RTX 3050 Laptop GPU");
+    let mut builder =
+        DiagnosticReportBuilder::new("Intel Core i5-13420H / NVIDIA RTX 3050 Laptop GPU");
     builder.set_user_description(&description);
 
     // Query Process 1 for rolling Astrophage diagnostic buffer over e-bus

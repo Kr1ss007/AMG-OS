@@ -60,14 +60,14 @@ fn test_process1_backend_daemon_dispatch_loop() {
                         max_results,
                     } => {
                         let results = pf_clone.lock().unwrap().query(&query, max_results);
-                        let _ = srv_clone.publish_event(&SystemEvent::PathfinderResults {
-                            query_id,
-                            results,
-                        });
+                        let _ = srv_clone
+                            .publish_event(&SystemEvent::PathfinderResults { query_id, results });
                     }
 
                     DesktopRequest::SetPowerProfile(profile) => {
-                        let gov = pw_clone.set_profile(profile).unwrap_or_else(|_| "powersave".into());
+                        let gov = pw_clone
+                            .set_profile(profile)
+                            .unwrap_or_else(|_| "powersave".into());
                         let _ = srv_clone.publish_event(&SystemEvent::PowerProfileChanged {
                             profile,
                             active_governor: gov,
@@ -106,24 +106,26 @@ fn test_process1_backend_daemon_dispatch_loop() {
 
                     DesktopRequest::GetAstrophageBuffer { max_entries } => {
                         let entries = as_clone.snapshot(max_entries);
-                        let _ = srv_clone.publish_event(&SystemEvent::AstrophageBufferSnapshot {
-                            entries,
-                        });
+                        let _ = srv_clone
+                            .publish_event(&SystemEvent::AstrophageBufferSnapshot { entries });
                     }
 
                     DesktopRequest::GetInputDevices => {
                         let devices = mw_clone.enumerate_devices().unwrap_or_default();
-                        let _ = srv_clone.publish_event(&SystemEvent::InputDevicesChanged { devices });
+                        let _ =
+                            srv_clone.publish_event(&SystemEvent::InputDevicesChanged { devices });
                     }
 
                     DesktopRequest::SetTouchpadConfig(config) => {
                         mw_clone.set_touchpad_config(config.clone());
-                        let _ = srv_clone.publish_event(&SystemEvent::TouchpadConfigChanged(config));
+                        let _ =
+                            srv_clone.publish_event(&SystemEvent::TouchpadConfigChanged(config));
                     }
 
                     DesktopRequest::SetKeyboardConfig(config) => {
                         mw_clone.set_keyboard_config(config.clone());
-                        let _ = srv_clone.publish_event(&SystemEvent::KeyboardConfigChanged(config));
+                        let _ =
+                            srv_clone.publish_event(&SystemEvent::KeyboardConfigChanged(config));
                     }
 
                     DesktopRequest::InspectPackage { package_path } => {
@@ -225,7 +227,10 @@ fn test_process1_backend_daemon_dispatch_loop() {
         } => {
             // We only assert the interface is non-empty; actual WiFi connection
             // depends on the SSID being reachable in the test environment.
-            assert!(!interface_name.is_empty(), "Interface name must be populated");
+            assert!(
+                !interface_name.is_empty(),
+                "Interface name must be populated"
+            );
         }
         other => panic!("Expected NetworkStateChanged, got {:?}", other),
     }
@@ -252,7 +257,10 @@ fn test_process1_backend_daemon_dispatch_loop() {
     match event6 {
         SystemEvent::InputDevicesChanged { devices } => {
             // Devices enumerated from /proc/bus/input/devices on host
-            assert!(!devices.is_empty(), "Should detect host keyboard and touchpad");
+            assert!(
+                !devices.is_empty(),
+                "Should detect host keyboard and touchpad"
+            );
         }
         other => panic!("Expected InputDevicesChanged, got {:?}", other),
     }

@@ -247,7 +247,10 @@ mod tests {
         let screen_width = 1920;
 
         // Hit identity mark
-        assert_eq!(panel.hit_test(16, screen_width), Some(TopBarTarget::IdentityMark));
+        assert_eq!(
+            panel.hit_test(16, screen_width),
+            Some(TopBarTarget::IdentityMark)
+        );
 
         // Hit notifications at right
         assert_eq!(

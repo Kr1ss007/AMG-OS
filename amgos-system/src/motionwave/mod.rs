@@ -124,7 +124,12 @@ impl MotionWaveController {
         }
 
         let name_lower = name.to_lowercase();
-        let (device_type, is_multitouch) = if name_lower.contains("touchpad") || (has_abs && (prop.contains('5') || name_lower.contains("elan") || name_lower.contains("synaptics"))) {
+        let (device_type, is_multitouch) = if name_lower.contains("touchpad")
+            || (has_abs
+                && (prop.contains('5')
+                    || name_lower.contains("elan")
+                    || name_lower.contains("synaptics")))
+        {
             (InputDeviceType::Touchpad, true)
         } else if name_lower.contains("keyboard") || handlers.contains("kbd") {
             (InputDeviceType::Keyboard, false)
@@ -214,13 +219,21 @@ B: EV=3
         let devices = MotionWaveController::parse_proc_devices(sample);
         assert_eq!(devices.len(), 3);
 
-        let touchpad = devices.iter().find(|d| d.device_type == InputDeviceType::Touchpad).expect("Touchpad found");
+        let touchpad = devices
+            .iter()
+            .find(|d| d.device_type == InputDeviceType::Touchpad)
+            .expect("Touchpad found");
         assert_eq!(touchpad.event_node, "/dev/input/event5");
         assert_eq!(touchpad.vendor_id, 0x04f3);
         assert_eq!(touchpad.product_id, 0x321a);
         assert!(touchpad.is_multitouch);
 
-        let keyboard = devices.iter().find(|d| d.device_type == InputDeviceType::Keyboard && d.sysfs_name.contains("keyboard")).expect("Keyboard found");
+        let keyboard = devices
+            .iter()
+            .find(|d| {
+                d.device_type == InputDeviceType::Keyboard && d.sysfs_name.contains("keyboard")
+            })
+            .expect("Keyboard found");
         assert_eq!(keyboard.event_node, "/dev/input/event3");
         assert_eq!(keyboard.vendor_id, 0x0001);
     }

@@ -42,21 +42,11 @@ pub enum TouchpadGesture {
         is_finished: bool,
     },
     /// Two-finger pinch or spread (zoom)
-    Pinch {
-        scale: f64,
-        is_finished: bool,
-    },
+    Pinch { scale: f64, is_finished: bool },
     /// Two-finger scroll
-    Scroll {
-        delta_x: f64,
-        delta_y: f64,
-    },
+    Scroll { delta_x: f64, delta_y: f64 },
     /// Finger tap (1-finger left click, 2-finger right click, 3-finger middle click)
-    Tap {
-        fingers: u8,
-        x: f64,
-        y: f64,
-    },
+    Tap { fingers: u8, x: f64, y: f64 },
 }
 
 /// Modifier keys state
@@ -157,7 +147,12 @@ impl MotionWaveEngine {
     }
 
     /// Process a raw touchpad touch or motion vector
-    pub fn process_touchpad_motion(&mut self, fingers: u8, dx: f64, dy: f64) -> Option<MotionWaveTarget> {
+    pub fn process_touchpad_motion(
+        &mut self,
+        fingers: u8,
+        dx: f64,
+        dy: f64,
+    ) -> Option<MotionWaveTarget> {
         let speed_factor = (1.0 + self.touchpad_config.pointer_speed).max(0.1) as f64;
         let effective_dx = dx * speed_factor;
         let effective_dy = if self.touchpad_config.natural_scrolling {
@@ -202,9 +197,13 @@ impl MotionWaveEngine {
                     self.accumulated_swipe_dy = 0.0;
 
                     if is_left {
-                        Some(MotionWaveTarget::DesktopSwitch(DesktopTransitionDirection::Left))
+                        Some(MotionWaveTarget::DesktopSwitch(
+                            DesktopTransitionDirection::Left,
+                        ))
                     } else {
-                        Some(MotionWaveTarget::DesktopSwitch(DesktopTransitionDirection::Right))
+                        Some(MotionWaveTarget::DesktopSwitch(
+                            DesktopTransitionDirection::Right,
+                        ))
                     }
                 } else {
                     None
@@ -335,7 +334,9 @@ mod tests {
         let gesture2 = engine.process_touchpad_motion(4, 30.0, 0.0);
         assert_eq!(
             gesture2,
-            Some(MotionWaveTarget::DesktopSwitch(DesktopTransitionDirection::Right))
+            Some(MotionWaveTarget::DesktopSwitch(
+                DesktopTransitionDirection::Right
+            ))
         );
     }
 
@@ -347,10 +348,20 @@ mod tests {
         tiling.register_window(1, WindowRect::new(100, 100, 800, 600));
 
         assert_eq!(pilot.state, PilotControlState::Hidden);
-        engine.dispatch_action(&MotionWaveTarget::PilotControlToggle, &mut pilot, &mut tiling, Some(1));
+        engine.dispatch_action(
+            &MotionWaveTarget::PilotControlToggle,
+            &mut pilot,
+            &mut tiling,
+            Some(1),
+        );
         assert_eq!(pilot.state, PilotControlState::Entering);
 
-        engine.dispatch_action(&MotionWaveTarget::WindowTiling(KeyAction::TileLeft), &mut pilot, &mut tiling, Some(1));
+        engine.dispatch_action(
+            &MotionWaveTarget::WindowTiling(KeyAction::TileLeft),
+            &mut pilot,
+            &mut tiling,
+            Some(1),
+        );
         assert_eq!(tiling.animations.len(), 1);
         let anim = &tiling.animations[0];
         assert_eq!(anim.to_rect.x, 0);

@@ -1,3 +1,5 @@
 TEST: Boot Silence
 Condition: System boots from UEFI handoff to desktop session presentation.
 Expected Outcome: Zero kernel log messages visible, zero TTY cursor blink, no Plymouth or third-party boot splash. Display remains visually clean.
+Latest Result: TEST-SUITE/boot/results/2026-09-16_silence.txt (PASS)
+

@@ -78,7 +78,11 @@ impl PermissionManager {
         hash
     }
 
-    pub fn apply_config(&self, payload: &[u8], signature: &[u8; 32]) -> Result<SignedSystemConfig, String> {
+    pub fn apply_config(
+        &self,
+        payload: &[u8],
+        signature: &[u8; 32],
+    ) -> Result<SignedSystemConfig, String> {
         if !self.verify_signed_config(payload, signature) {
             return Err("Cryptographic signature verification failed for system config".into());
         }
@@ -103,5 +107,184 @@ impl PermissionManager {
 impl Default for PermissionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Errors raised when an operation violates AMGOS filesystem protection boundaries
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FsProtectionError {
+    RootDirectoryProtected,
+    CriticalPathProtected(String),
+    ImmutablePartitionProtected(String),
+}
+
+impl std::fmt::Display for FsProtectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RootDirectoryProtected => {
+                write!(
+                    f,
+                    "Prohibited operation: root directory '/' is immutable and protected"
+                )
+            }
+            Self::CriticalPathProtected(path) => {
+                write!(f, "Prohibited operation: '{path}' is a protected critical system path and cannot be deleted regardless of root credentials")
+            }
+            Self::ImmutablePartitionProtected(path) => {
+                write!(
+                    f,
+                    "Prohibited operation: '{path}' belongs to an immutable base system partition"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for FsProtectionError {}
+
+/// Hard block on recursive/unrestricted deletion of critical paths (Week 4 Day 4)
+///
+/// Regardless of caller credentials (including root/uid 0), system critical
+/// directories cannot be deleted or wiped.
+pub fn validate_deletion_safety<P: AsRef<std::path::Path>>(
+    target_path: P,
+) -> Result<(), FsProtectionError> {
+    let path = target_path.as_ref();
+    let path_str = path.to_string_lossy();
+
+    // Check root directory
+    if path_str == "/" || path_str.is_empty() {
+        return Err(FsProtectionError::RootDirectoryProtected);
+    }
+
+    // Critical root trees that must NEVER be deleted
+    const PROTECTED_ROOT_TREES: &[&str] = &[
+        "/boot",
+        "/usr",
+        "/etc",
+        "/lib",
+        "/lib64",
+        "/bin",
+        "/sbin",
+        "/dev",
+        "/proc",
+        "/sys",
+        "/var",
+        "/home",
+        "/root",
+        "/mnt/base_a",
+        "/mnt/base_b",
+        "/opt",
+    ];
+
+    for &tree in PROTECTED_ROOT_TREES {
+        if path_str == tree {
+            return Err(FsProtectionError::CriticalPathProtected(tree.to_string()));
+        }
+
+        // Entire hierarchy protected for OS system paths
+        if matches!(
+            tree,
+            "/boot"
+                | "/usr"
+                | "/etc"
+                | "/lib"
+                | "/lib64"
+                | "/bin"
+                | "/sbin"
+                | "/dev"
+                | "/proc"
+                | "/sys"
+                | "/mnt/base_a"
+                | "/mnt/base_b"
+        ) && path_str.starts_with(&format!("{tree}/"))
+        {
+            return Err(FsProtectionError::CriticalPathProtected(
+                path_str.to_string(),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rm_rf_prohibition_on_critical_paths() {
+        // Root directory
+        assert_eq!(
+            validate_deletion_safety("/"),
+            Err(FsProtectionError::RootDirectoryProtected)
+        );
+
+        // Core system roots
+        assert!(matches!(
+            validate_deletion_safety("/boot"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/usr"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/etc"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/bin"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/sbin"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/dev"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/proc"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/sys"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+
+        // Subpaths under protected system directories
+        assert!(matches!(
+            validate_deletion_safety("/etc/systemd"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/usr/bin"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+        assert!(matches!(
+            validate_deletion_safety("/boot/efi"),
+            Err(FsProtectionError::CriticalPathProtected(_))
+        ));
+
+        // Safe non-critical paths allowed (e.g. within temp/cache or user files)
+        assert!(validate_deletion_safety("/tmp/scratch_dir").is_ok());
+        assert!(validate_deletion_safety("/home/amgos/Downloads/test.deb").is_ok());
+    }
+
+    #[test]
+    fn test_signed_config_hmac() {
+        let pm = PermissionManager::new();
+        let cfg = SignedSystemConfig::new("amgos-admin", "en_US.UTF-8", 1.0);
+        let payload = cfg.to_bytes().unwrap();
+        let sig = pm.compute_hmac(&payload);
+
+        let verified = pm.verify_signed_config(&payload, &sig);
+        assert!(verified);
+
+        let applied = pm.apply_config(&payload, &sig).unwrap();
+        assert_eq!(applied.user_name, "amgos-admin");
+        assert_eq!(pm.get_active_config().unwrap().user_name, "amgos-admin");
     }
 }

@@ -15,6 +15,7 @@
 
 pub mod animations;
 pub mod compositor;
+pub mod error_dialog;
 pub mod lockscreen;
 pub mod motion_wave;
 pub mod notifications;
@@ -26,9 +27,7 @@ pub mod topbar;
 pub mod traffic_lights;
 pub mod wizard;
 
-use amgos_protocol::ebus::{
-    DesktopRequest, EventBusClient, SystemEvent, DEFAULT_EBUS_SOCKET_PATH,
-};
+use amgos_protocol::ebus::{DesktopRequest, EventBusClient, SystemEvent, DEFAULT_EBUS_SOCKET_PATH};
 use compositor::CompositorBridge;
 use crossbeam_channel::unbounded;
 use lockscreen::LockscreenState;
@@ -68,7 +67,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut active_power_type: Option<PowerScreenType> = None;
     let mut dock = SmartDock::new(DockPosition::Bottom);
     let mut pilot_control = PilotControl::new();
-    let mut tiling = TilingWindowManager::new(compositor.display_width(), compositor.display_height());
+    let mut tiling =
+        TilingWindowManager::new(compositor.display_width(), compositor.display_height());
     let mut notifications = NotificationCenter::new();
     let mut motion_wave = MotionWaveEngine::new();
 
@@ -134,17 +134,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 SystemEvent::KeyboardConfigChanged(cfg) => {
                     motion_wave.update_keyboard_config(cfg);
                 }
-                SystemEvent::PowerStateTransition { target, .. } => {
-                    match target {
-                        amgos_protocol::ebus::PowerState::Shutdown => {
-                            active_power_type = Some(PowerScreenType::Shutdown);
-                        }
-                        amgos_protocol::ebus::PowerState::Reboot => {
-                            active_power_type = Some(PowerScreenType::Restart);
-                        }
-                        _ => {}
+                SystemEvent::PowerStateTransition { target, .. } => match target {
+                    amgos_protocol::ebus::PowerState::Shutdown => {
+                        active_power_type = Some(PowerScreenType::Shutdown);
                     }
-                }
+                    amgos_protocol::ebus::PowerState::Reboot => {
+                        active_power_type = Some(PowerScreenType::Restart);
+                    }
+                    _ => {}
+                },
                 SystemEvent::FirstBootConfigApplied { .. } => {
                     // Setup Wizard completed, ready desktop
                     boot_phase = BootPhase::DesktopReady;
@@ -180,7 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = pilot_control.tick(frame_delta);
                 let _ = notifications.tick(frame_delta);
                 let _ = tiling.tick(frame_delta);
-                let _ = lockscreen.tick(frame_delta);
+                lockscreen.tick(frame_delta);
 
                 let active_screen = match active_power_type {
                     Some(PowerScreenType::Shutdown) => Some(&shutdown_screen),
@@ -195,8 +193,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     &pilot_control,
                     &tiling,
                     &notifications,
-                    if is_first_boot && !wizard.is_completed { Some(&wizard) } else { None },
+                    if is_first_boot && !wizard.is_completed {
+                        Some(&wizard)
+                    } else {
+                        None
+                    },
                     active_screen,
+                    None,
                 );
 
                 compositor.tick_frame();

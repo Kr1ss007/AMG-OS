@@ -81,10 +81,8 @@ impl GpuRenderer {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
-            self.text_buffer.set_size(
-                Some(width as f32),
-                Some(height as f32),
-            );
+            self.text_buffer
+                .set_size(Some(width as f32), Some(height as f32));
             self.pixel_buffer = vec![0u8; (width * height * 4) as usize];
         }
     }
@@ -96,9 +94,11 @@ impl GpuRenderer {
             Shaping::Advanced,
             None,
         );
-        self.text_buffer.shape_until_scroll(&mut self.font_system, false);
+        self.text_buffer
+            .shape_until_scroll(&mut self.font_system, false);
     }
 
+    #[allow(clippy::chunks_exact_to_as_chunks)]
     pub fn render(&mut self) -> Result<(), String> {
         let width = self.config.width as usize;
         let height = self.config.height as usize;
@@ -129,7 +129,10 @@ impl GpuRenderer {
             let line_y = run.line_y as i32;
             for glyph in run.glyphs.iter() {
                 let physical = glyph.physical((0.0, 0.0), 1.0);
-                if let Some(image) = self.swash_cache.get_image_uncached(&mut self.font_system, physical.cache_key) {
+                if let Some(image) = self
+                    .swash_cache
+                    .get_image_uncached(&mut self.font_system, physical.cache_key)
+                {
                     let gx = physical.x + image.placement.left;
                     let gy = line_y - image.placement.top;
 
@@ -158,9 +161,12 @@ impl GpuRenderer {
                                         let cur_g = self.pixel_buffer[offset + 1] as u32;
                                         let cur_b = self.pixel_buffer[offset + b_idx] as u32;
 
-                                        self.pixel_buffer[offset + r_idx] = ((text_r as u32 * a + cur_r * inv_a) / 255) as u8;
-                                        self.pixel_buffer[offset + 1] = ((text_g as u32 * a + cur_g * inv_a) / 255) as u8;
-                                        self.pixel_buffer[offset + b_idx] = ((text_b as u32 * a + cur_b * inv_a) / 255) as u8;
+                                        self.pixel_buffer[offset + r_idx] =
+                                            ((text_r as u32 * a + cur_r * inv_a) / 255) as u8;
+                                        self.pixel_buffer[offset + 1] =
+                                            ((text_g as u32 * a + cur_g * inv_a) / 255) as u8;
+                                        self.pixel_buffer[offset + b_idx] =
+                                            ((text_b as u32 * a + cur_b * inv_a) / 255) as u8;
                                     }
                                 }
                             }
@@ -189,9 +195,12 @@ impl GpuRenderer {
                                         let cur_g = self.pixel_buffer[offset + 1] as u32;
                                         let cur_b = self.pixel_buffer[offset + b_idx] as u32;
 
-                                        self.pixel_buffer[offset + r_idx] = ((sr * sa + cur_r * inv_a) / 255) as u8;
-                                        self.pixel_buffer[offset + 1] = ((sg * sa + cur_g * inv_a) / 255) as u8;
-                                        self.pixel_buffer[offset + b_idx] = ((sb * sa + cur_b * inv_a) / 255) as u8;
+                                        self.pixel_buffer[offset + r_idx] =
+                                            ((sr * sa + cur_r * inv_a) / 255) as u8;
+                                        self.pixel_buffer[offset + 1] =
+                                            ((sg * sa + cur_g * inv_a) / 255) as u8;
+                                        self.pixel_buffer[offset + b_idx] =
+                                            ((sb * sa + cur_b * inv_a) / 255) as u8;
                                     }
                                 }
                             }
@@ -217,9 +226,12 @@ impl GpuRenderer {
                                     let cur_g = self.pixel_buffer[offset + 1] as u32;
                                     let cur_b = self.pixel_buffer[offset + b_idx] as u32;
 
-                                    self.pixel_buffer[offset + r_idx] = ((text_r as u32 * mr + cur_r * (255 - mr)) / 255) as u8;
-                                    self.pixel_buffer[offset + 1] = ((text_g as u32 * mg + cur_g * (255 - mg)) / 255) as u8;
-                                    self.pixel_buffer[offset + b_idx] = ((text_b as u32 * mb + cur_b * (255 - mb)) / 255) as u8;
+                                    self.pixel_buffer[offset + r_idx] =
+                                        ((text_r as u32 * mr + cur_r * (255 - mr)) / 255) as u8;
+                                    self.pixel_buffer[offset + 1] =
+                                        ((text_g as u32 * mg + cur_g * (255 - mg)) / 255) as u8;
+                                    self.pixel_buffer[offset + b_idx] =
+                                        ((text_b as u32 * mb + cur_b * (255 - mb)) / 255) as u8;
                                 }
                             }
                         }

@@ -54,7 +54,10 @@ impl ApplicationHandler for TerminowApp {
 
             match PtySession::open(80, 24) {
                 Ok(pty) => self.pty = Some(pty),
-                Err(e) => eprintln!("[terminow] Warning: Unable to spawn interactive PTY shell: {}", e),
+                Err(e) => eprintln!(
+                    "[terminow] Warning: Unable to spawn interactive PTY shell: {}",
+                    e
+                ),
             }
 
             self.grid = Some(grid);

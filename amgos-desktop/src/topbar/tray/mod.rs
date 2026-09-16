@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// StatusNotifierItem category classification
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SniCategory {
+    #[default]
     ApplicationStatus,
     Communications,
     SystemServices,
@@ -24,24 +25,13 @@ pub enum SniCategory {
     Other,
 }
 
-impl Default for SniCategory {
-    fn default() -> Self {
-        Self::ApplicationStatus
-    }
-}
-
 /// StatusNotifierItem status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SniStatus {
     Passive,
+    #[default]
     Active,
     NeedsAttention,
-}
-
-impl Default for SniStatus {
-    fn default() -> Self {
-        Self::Active
-    }
 }
 
 /// ARGB32 icon pixmap data transmitted over D-Bus
@@ -117,7 +107,12 @@ impl StatusNotifierHost {
     }
 
     /// Register a new StatusNotifierItem by its D-Bus service and object path
-    pub fn register_item(&mut self, service: &str, path: &str, id: &str) -> &mut StatusNotifierItem {
+    pub fn register_item(
+        &mut self,
+        service: &str,
+        path: &str,
+        id: &str,
+    ) -> &mut StatusNotifierItem {
         let key = format!("{}:{}", service, path);
         let item = StatusNotifierItem::new(service, path, id);
         self.items.entry(key.clone()).or_insert(item);
@@ -205,15 +200,23 @@ mod tests {
         item.category = SniCategory::Communications;
 
         assert_eq!(host.len(), 1);
-        let queried = host.get_item("org.amgos.zen", "/StatusNotifierItem").unwrap();
+        let queried = host
+            .get_item("org.amgos.zen", "/StatusNotifierItem")
+            .unwrap();
         assert_eq!(queried.id, "zen-browser");
         assert_eq!(queried.icon_name.as_deref(), Some("zen-browser"));
         assert_eq!(queried.status, SniStatus::Active);
 
         // Update status
-        assert!(host.update_status("org.amgos.zen", "/StatusNotifierItem", SniStatus::NeedsAttention));
+        assert!(host.update_status(
+            "org.amgos.zen",
+            "/StatusNotifierItem",
+            SniStatus::NeedsAttention
+        ));
         assert_eq!(
-            host.get_item("org.amgos.zen", "/StatusNotifierItem").unwrap().status,
+            host.get_item("org.amgos.zen", "/StatusNotifierItem")
+                .unwrap()
+                .status,
             SniStatus::NeedsAttention
         );
 

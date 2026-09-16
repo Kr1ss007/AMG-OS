@@ -141,8 +141,7 @@ impl PowerManager {
 
                 sync_filesystem();
 
-                invoke_systemctl("reboot")
-                    .map_err(|e| format!("systemctl reboot failed: {e}"))?;
+                invoke_systemctl("reboot").map_err(|e| format!("systemctl reboot failed: {e}"))?;
                 Ok(PowerState::Reboot)
             }
 
@@ -239,10 +238,7 @@ fn has_swap() -> bool {
 /// Invoke systemctl for init-managed power transitions (shutdown/reboot).
 /// Spawns as a blocking call so Process 1 does not continue its main loop.
 fn invoke_systemctl(action: &str) -> std::io::Result<()> {
-    Command::new("systemctl")
-        .arg(action)
-        .status()
-        .map(|_| ())
+    Command::new("systemctl").arg(action).status().map(|_| ())
 }
 
 impl Default for PowerManager {

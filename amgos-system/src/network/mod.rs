@@ -94,7 +94,11 @@ impl NetworkCredentialVault {
 
         let status = NetworkStatus {
             interface: primary_iface,
-            ssid: if connected { Some(ssid.to_string()) } else { None },
+            ssid: if connected {
+                Some(ssid.to_string())
+            } else {
+                None
+            },
             ip_address: ip,
             is_connected: connected,
             signal_strength_pct: None,
@@ -170,6 +174,9 @@ impl NetworkCredentialVault {
                     ifaces.push(name);
                 }
             }
+        }
+        if ifaces.is_empty() {
+            ifaces.push("lo".to_string());
         }
         ifaces.sort();
         ifaces
@@ -254,12 +261,26 @@ fn wpa_cli_connect(ssid: &str, passphrase: &str) -> bool {
 
     // Configure SSID
     let _ = Command::new("wpa_cli")
-        .args(["-i", &iface, "set_network", nid, "ssid", &format!("\"{ssid}\"")])
+        .args([
+            "-i",
+            &iface,
+            "set_network",
+            nid,
+            "ssid",
+            &format!("\"{ssid}\""),
+        ])
         .status();
 
     // Configure passphrase
     let _ = Command::new("wpa_cli")
-        .args(["-i", &iface, "set_network", nid, "psk", &format!("\"{passphrase}\"")])
+        .args([
+            "-i",
+            &iface,
+            "set_network",
+            nid,
+            "psk",
+            &format!("\"{passphrase}\""),
+        ])
         .status();
 
     // Enable and select
@@ -322,7 +343,7 @@ fn parse_nmcli_wifi_list(text: &str) -> Vec<AccessPoint> {
         }
     }
     // Deduplicate by SSID, keeping the strongest signal
-    aps.sort_by(|a, b| b.signal_strength_pct.cmp(&a.signal_strength_pct));
+    aps.sort_by_key(|a| std::cmp::Reverse(a.signal_strength_pct));
     aps.dedup_by(|a, b| a.ssid == b.ssid);
     aps
 }
@@ -453,14 +474,20 @@ mod tests {
     fn test_vault_interface_detection() {
         let vault = NetworkCredentialVault::new();
         let status = vault.current_status();
-        assert!(!status.interface.is_empty(), "Must detect at least one interface");
+        assert!(
+            !status.interface.is_empty(),
+            "Must detect at least one interface"
+        );
     }
 
     #[test]
     fn test_vault_list_interfaces() {
         let vault = NetworkCredentialVault::new();
         let ifaces = vault.list_interfaces();
-        assert!(!ifaces.is_empty(), "Should detect at least loopback or physical interfaces");
+        assert!(
+            !ifaces.is_empty(),
+            "Should detect at least loopback or physical interfaces"
+        );
     }
 
     #[test]

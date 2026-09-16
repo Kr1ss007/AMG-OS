@@ -166,7 +166,12 @@ fn detect_graphics() -> (String, Option<String>, bool) {
                             .trim()
                             .to_lowercase();
                         let driver = fs::read_link(path.join("driver"))
-                            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                            .map(|p| {
+                                p.file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string()
+                            })
                             .unwrap_or_else(|_| "unbound".to_string());
 
                         match vendor.as_str() {
@@ -177,7 +182,8 @@ fn detect_graphics() -> (String, Option<String>, bool) {
                                 } else {
                                     "NVIDIA Discrete GPU"
                                 };
-                                dgpu_name = format!("{model} [{vendor}:{device}] (driver: {driver})");
+                                dgpu_name =
+                                    format!("{model} [{vendor}:{device}] (driver: {driver})");
                             }
                             "0x8086" => {
                                 let model = if device == "0xa7a8" {
@@ -185,11 +191,14 @@ fn detect_graphics() -> (String, Option<String>, bool) {
                                 } else {
                                     "Intel Integrated Graphics"
                                 };
-                                igpu_name = Some(format!("{model} [{vendor}:{device}] (driver: {driver})"));
+                                igpu_name =
+                                    Some(format!("{model} [{vendor}:{device}] (driver: {driver})"));
                             }
                             "0x1002" => {
                                 discrete_detected = true;
-                                dgpu_name = format!("AMD Radeon GPU [{vendor}:{device}] (driver: {driver})");
+                                dgpu_name = format!(
+                                    "AMD Radeon GPU [{vendor}:{device}] (driver: {driver})"
+                                );
                             }
                             _ => {}
                         }

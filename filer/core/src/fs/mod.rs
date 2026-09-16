@@ -62,6 +62,78 @@ impl FileSystemIndexer {
         Ok(results)
     }
 
+    /// Check whether a path is protected by AMGOS rm -rf prohibition (SPEC Section 2.2 & Week 4 Day 4)
+    pub fn is_protected_critical_path<P: AsRef<Path>>(target: P) -> bool {
+        let path = target.as_ref();
+        let path_str = path.to_string_lossy();
+        if path_str == "/" || path_str.is_empty() {
+            return true;
+        }
+        const CRITICAL_ROOTS: &[&str] = &[
+            "/boot",
+            "/usr",
+            "/etc",
+            "/lib",
+            "/lib64",
+            "/bin",
+            "/sbin",
+            "/dev",
+            "/proc",
+            "/sys",
+            "/var",
+            "/home",
+            "/root",
+            "/mnt/base_a",
+            "/mnt/base_b",
+            "/opt",
+        ];
+        for &crit in CRITICAL_ROOTS {
+            if path_str == crit {
+                return true;
+            }
+            if matches!(
+                crit,
+                "/boot"
+                    | "/usr"
+                    | "/etc"
+                    | "/lib"
+                    | "/lib64"
+                    | "/bin"
+                    | "/sbin"
+                    | "/dev"
+                    | "/proc"
+                    | "/sys"
+                    | "/mnt/base_a"
+                    | "/mnt/base_b"
+            ) && path_str.starts_with(&format!("{crit}/"))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Safely delete a target path while strictly preventing deletion of critical OS hierarchies
+    pub fn safe_delete<P: AsRef<Path>>(target: P) -> Result<(), io::Error> {
+        let path = target.as_ref();
+        if Self::is_protected_critical_path(path) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "Prohibited operation: critical system path '{}' cannot be deleted",
+                    path.display()
+                ),
+            ));
+        }
+        if path.is_dir() {
+            fs::remove_dir_all(path)
+        } else if path.exists() {
+            fs::remove_file(path)
+        } else {
+            Ok(())
+        }
+    }
+
     fn scan_recursive_internal(
         dir: &Path,
         current_depth: usize,
@@ -194,7 +266,11 @@ impl InotifyWatcher {
             let len = inotify_evt.len as usize;
 
             let file_name = if len > 0 {
-                let name_ptr = unsafe { buffer.as_ptr().add(offset + std::mem::size_of::<libc::inotify_event>()) };
+                let name_ptr = unsafe {
+                    buffer
+                        .as_ptr()
+                        .add(offset + std::mem::size_of::<libc::inotify_event>())
+                };
                 let c_str = unsafe { std::ffi::CStr::from_ptr(name_ptr as *const libc::c_char) };
                 c_str.to_string_lossy().to_string()
             } else {
@@ -245,7 +321,8 @@ mod tests {
 
     #[test]
     fn test_list_directory() {
-        let entries = FileSystemIndexer::list_directory(".").expect("Failed to list current directory");
+        let entries =
+            FileSystemIndexer::list_directory(".").expect("Failed to list current directory");
         assert!(!entries.is_empty());
     }
 
@@ -261,7 +338,8 @@ mod tests {
         // Create a test file
         let test_file = tmp_dir.join("test_signal.txt");
         let mut f = File::create(&test_file).expect("Failed to create test file");
-        f.write_all(b"AMGOS inotify test").expect("Failed to write test file");
+        f.write_all(b"AMGOS inotify test")
+            .expect("Failed to write test file");
         f.sync_all().expect("Sync failed");
 
         // Poll events
@@ -270,5 +348,33 @@ mod tests {
         assert!(!events.is_empty(), "Inotify should capture file creation");
 
         let _ = fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn test_rm_rf_prohibition() {
+        assert!(FileSystemIndexer::is_protected_critical_path("/"));
+        assert!(FileSystemIndexer::is_protected_critical_path("/usr"));
+        assert!(FileSystemIndexer::is_protected_critical_path("/usr/bin"));
+        assert!(FileSystemIndexer::is_protected_critical_path(
+            "/etc/systemd"
+        ));
+        assert!(FileSystemIndexer::is_protected_critical_path("/boot"));
+        assert!(FileSystemIndexer::is_protected_critical_path("/boot/efi"));
+        assert!(FileSystemIndexer::is_protected_critical_path("/mnt/base_a"));
+
+        assert!(!FileSystemIndexer::is_protected_critical_path(
+            "/tmp/test_dir"
+        ));
+        assert!(!FileSystemIndexer::is_protected_critical_path(
+            "/home/user/document.txt"
+        ));
+
+        // Attempting to delete protected path must return PermissionDenied
+        let res = FileSystemIndexer::safe_delete("/usr");
+        assert!(res.is_err());
+        assert_eq!(
+            res.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
     }
 }

@@ -139,9 +139,7 @@ impl EventBusServer {
                     // No data pending on this stream right now; retain
                     retained.push(stream);
                 }
-                Err(FrameError::Io(ref e))
-                    if e.contains("failed to fill whole buffer") =>
-                {
+                Err(FrameError::Io(ref e)) if e.contains("failed to fill whole buffer") => {
                     // Client disconnected cleanly (EOF)
                 }
                 Err(_) => {
@@ -253,7 +251,9 @@ mod tests {
             query_id: 42,
             results: Vec::new(),
         };
-        server.publish_event(&resp).expect("Failed to publish response");
+        server
+            .publish_event(&resp)
+            .expect("Failed to publish response");
 
         // Client reads response
         let received_event = client.read_event().expect("Client failed to read response");

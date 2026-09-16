@@ -52,7 +52,7 @@ impl TerminalGrid {
             if self.in_escape {
                 self.escape_buf.push(b);
                 // Check for end of ANSI sequence
-                if (b >= b'A' && b <= b'Z') || (b >= b'a' && b <= b'z') || b == b'~' {
+                if b.is_ascii_alphabetic() || b == b'~' {
                     self.process_escape_sequence();
                     self.in_escape = false;
                     self.escape_buf.clear();
@@ -140,8 +140,14 @@ impl TerminalGrid {
                 'H' | 'f' => {
                     // Cursor Position
                     let parts: Vec<&str> = params.split(';').collect();
-                    let r = parts.get(0).and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
-                    let c = parts.get(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                    let r = parts
+                        .first()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(1);
+                    let c = parts
+                        .get(1)
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(1);
                     self.cursor_row = (r.saturating_sub(1)).min(self.rows.saturating_sub(1));
                     self.cursor_col = (c.saturating_sub(1)).min(self.cols.saturating_sub(1));
                 }
@@ -186,7 +192,8 @@ impl TerminalGrid {
             let start = r * self.cols;
             let end = start + self.cols;
             if end <= self.cells.len() {
-                let row_chars: String = self.cells[start..end].iter().map(|c| c.character).collect();
+                let row_chars: String =
+                    self.cells[start..end].iter().map(|c| c.character).collect();
                 out.push_str(row_chars.trim_end());
             }
             if r + 1 < self.rows {
@@ -215,6 +222,6 @@ mod tests {
     fn test_ansi_clear_sequence() {
         let mut grid = TerminalGrid::new(20, 5);
         grid.write_bytes(b"some text\x1B[2J");
-        assert_eq!(grid.cells.iter().all(|c| c.character == ' '), true);
+        assert!(grid.cells.iter().all(|c| c.character == ' '));
     }
 }

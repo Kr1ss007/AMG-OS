@@ -8,7 +8,6 @@
 //! macOS-style "Continue" buttons. Young Serif typeface for body copy.
 //! Cubic-bezier animation transitions between steps.
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WizardStep {
     LanguageAndRegion = 1,
@@ -69,10 +68,10 @@ impl SetupWizardState {
         if self.transition_progress < 1.0 {
             // Cubic bezier ease-out approximation for the transition
             self.transition_progress = (self.transition_progress + delta_t * 2.0).min(1.0);
-            
+
             // Standard Animation Engine curve
             let ease_out = 1.0 - (1.0 - self.transition_progress).powi(3);
-            
+
             self.card_opacity = ease_out;
             self.card_y_offset = 20.0 * (1.0 - ease_out);
         }

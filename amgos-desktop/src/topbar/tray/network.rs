@@ -147,13 +147,11 @@ mod tests {
 
         // Scan results update signal to 95% -> 4 bars
         let scan = SystemEvent::WifiScanResults {
-            access_points: vec![
-                WifiAccessPoint {
-                    ssid: "AMGOS-5G".to_string(),
-                    signal_strength_pct: 95,
-                    is_secured: true,
-                },
-            ],
+            access_points: vec![WifiAccessPoint {
+                ssid: "AMGOS-5G".to_string(),
+                signal_strength_pct: 95,
+                is_secured: true,
+            }],
         };
         widget.handle_event(&scan);
         assert_eq!(widget.signal_pct, 95);

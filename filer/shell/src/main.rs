@@ -35,7 +35,9 @@ impl ApplicationHandler for FilerApp {
         if self.window.is_none() {
             let window = Arc::new(
                 event_loop
-                    .create_window(winit::window::Window::default_attributes().with_title("Filer - AMG-OS"))
+                    .create_window(
+                        winit::window::Window::default_attributes().with_title("Filer - AMG-OS"),
+                    )
                     .unwrap(),
             );
             self.window = Some(window.clone());
@@ -68,7 +70,7 @@ impl ApplicationHandler for FilerApp {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Zero TTY output in production
-    
+
     let running = Arc::new(AtomicBool::new(true));
     let r_clone = Arc::clone(&running);
     let (_event_tx, _event_rx) = unbounded();
@@ -99,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let event_loop = EventLoop::new().unwrap();
     let mut app = FilerApp::default();
-    
+
     // Run the Wayland native Winit event loop
     event_loop.run_app(&mut app)?;
 

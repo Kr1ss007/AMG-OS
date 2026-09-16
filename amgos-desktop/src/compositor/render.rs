@@ -8,7 +8,6 @@
 //! - AMGOS INTERFACE SHELL Section 9 (Typography: Inter, JetBrains Mono, Young Serif)
 
 use crate::notifications::NotificationCenter;
-use crate::pilot_control::PilotControl;
 use crate::shutdown_ui::PowerScreenState;
 use crate::smart_dock::SmartDock;
 use crate::tiling::TilingWindowManager;
@@ -26,57 +25,159 @@ pub const EMERALD_GREEN: (u8, u8, u8, u8) = (16, 185, 129, 255);
 /// across all system surfaces without external font dependencies.
 pub fn get_glyph_bitmap(ch: char) -> &'static [u8; 12] {
     match ch {
-        'A' | 'a' => &[0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00],
-        'B' | 'b' => &[0x7C, 0x66, 0x66, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x00, 0x00, 0x00, 0x00],
-        'C' | 'c' => &[0x3C, 0x66, 0x60, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        'D' | 'd' => &[0x78, 0x6C, 0x66, 0x66, 0x66, 0x66, 0x6C, 0x78, 0x00, 0x00, 0x00, 0x00],
-        'E' | 'e' => &[0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00],
-        'F' | 'f' => &[0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x00],
-        'G' | 'g' => &[0x3C, 0x66, 0x60, 0x6E, 0x66, 0x66, 0x66, 0x3E, 0x00, 0x00, 0x00, 0x00],
-        'H' | 'h' => &[0x66, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00],
-        'I' | 'i' => &[0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00, 0x00, 0x00, 0x00],
-        'J' | 'j' => &[0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x6C, 0x6C, 0x38, 0x00, 0x00, 0x00, 0x00],
-        'K' | 'k' => &[0x66, 0x6C, 0x78, 0x70, 0x78, 0x6C, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00],
-        'L' | 'l' => &[0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00],
-        'M' | 'm' => &[0x63, 0x77, 0x7F, 0x6B, 0x63, 0x63, 0x63, 0x63, 0x00, 0x00, 0x00, 0x00],
-        'N' | 'n' => &[0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00],
-        'O' | 'o' => &[0x3C, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        'P' | 'p' => &[0x7C, 0x66, 0x66, 0x7C, 0x60, 0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x00],
-        'Q' | 'q' => &[0x3C, 0x66, 0x66, 0x66, 0x66, 0x6E, 0x3C, 0x0E, 0x00, 0x00, 0x00, 0x00],
-        'R' | 'r' => &[0x7C, 0x66, 0x66, 0x7C, 0x78, 0x6C, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00],
-        'S' | 's' => &[0x3C, 0x66, 0x60, 0x3C, 0x06, 0x06, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        'T' | 't' => &[0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00],
-        'U' | 'u' => &[0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        'V' | 'v' => &[0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x3C, 0x18, 0x00, 0x00, 0x00, 0x00],
-        'W' | 'w' => &[0x63, 0x63, 0x63, 0x6B, 0x7F, 0x77, 0x63, 0x63, 0x00, 0x00, 0x00, 0x00],
-        'X' | 'x' => &[0x66, 0x66, 0x3C, 0x18, 0x18, 0x3C, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00],
-        'Y' | 'y' => &[0x66, 0x66, 0x66, 0x3C, 0x18, 0x18, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00],
-        'Z' | 'z' => &[0x7E, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00],
-        '0' => &[0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        '1' => &[0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00, 0x00, 0x00, 0x00],
-        '2' => &[0x3C, 0x66, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00],
-        '3' => &[0x3C, 0x66, 0x06, 0x1C, 0x06, 0x06, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        '4' => &[0x0C, 0x1C, 0x34, 0x64, 0x7E, 0x04, 0x04, 0x0E, 0x00, 0x00, 0x00, 0x00],
-        '5' => &[0x7E, 0x60, 0x7C, 0x06, 0x06, 0x06, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        '6' => &[0x1C, 0x30, 0x60, 0x7C, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        '7' => &[0x7E, 0x06, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00],
-        '8' => &[0x3C, 0x66, 0x66, 0x3C, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        '9' => &[0x3C, 0x66, 0x66, 0x3E, 0x06, 0x06, 0x0C, 0x38, 0x00, 0x00, 0x00, 0x00],
-        ':' => &[0x00, 0x18, 0x18, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00],
-        '.' => &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00],
-        ',' => &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x08, 0x10, 0x00, 0x00],
-        '-' => &[0x00, 0x00, 0x00, 0x7E, 0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        '+' => &[0x00, 0x18, 0x18, 0x7E, 0x7E, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00],
-        '%' => &[0x62, 0x64, 0x08, 0x10, 0x20, 0x26, 0x46, 0x00, 0x00, 0x00, 0x00, 0x00],
-        '[' => &[0x3C, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        ']' => &[0x3C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x3C, 0x00, 0x00, 0x00, 0x00],
-        '(' => &[0x0C, 0x18, 0x30, 0x30, 0x30, 0x30, 0x18, 0x0C, 0x00, 0x00, 0x00, 0x00],
-        ')' => &[0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x0C, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00],
-        '/' => &[0x02, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00],
-        '\\' => &[0x40, 0x60, 0x30, 0x18, 0x0C, 0x06, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00],
-        '\'' => &[0x18, 0x18, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        '!' => &[0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00],
-        '?' => &[0x3C, 0x66, 0x06, 0x0C, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00],
+        'A' | 'a' => &[
+            0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'B' | 'b' => &[
+            0x7C, 0x66, 0x66, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'C' | 'c' => &[
+            0x3C, 0x66, 0x60, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'D' | 'd' => &[
+            0x78, 0x6C, 0x66, 0x66, 0x66, 0x66, 0x6C, 0x78, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'E' | 'e' => &[
+            0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'F' | 'f' => &[
+            0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'G' | 'g' => &[
+            0x3C, 0x66, 0x60, 0x6E, 0x66, 0x66, 0x66, 0x3E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'H' | 'h' => &[
+            0x66, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'I' | 'i' => &[
+            0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'J' | 'j' => &[
+            0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x6C, 0x6C, 0x38, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'K' | 'k' => &[
+            0x66, 0x6C, 0x78, 0x70, 0x78, 0x6C, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'L' | 'l' => &[
+            0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'M' | 'm' => &[
+            0x63, 0x77, 0x7F, 0x6B, 0x63, 0x63, 0x63, 0x63, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'N' | 'n' => &[
+            0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'O' | 'o' => &[
+            0x3C, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'P' | 'p' => &[
+            0x7C, 0x66, 0x66, 0x7C, 0x60, 0x60, 0x60, 0x60, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'Q' | 'q' => &[
+            0x3C, 0x66, 0x66, 0x66, 0x66, 0x6E, 0x3C, 0x0E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'R' | 'r' => &[
+            0x7C, 0x66, 0x66, 0x7C, 0x78, 0x6C, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'S' | 's' => &[
+            0x3C, 0x66, 0x60, 0x3C, 0x06, 0x06, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'T' | 't' => &[
+            0x7E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'U' | 'u' => &[
+            0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'V' | 'v' => &[
+            0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x3C, 0x18, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'W' | 'w' => &[
+            0x63, 0x63, 0x63, 0x6B, 0x7F, 0x77, 0x63, 0x63, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'X' | 'x' => &[
+            0x66, 0x66, 0x3C, 0x18, 0x18, 0x3C, 0x66, 0x66, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'Y' | 'y' => &[
+            0x66, 0x66, 0x66, 0x3C, 0x18, 0x18, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+        ],
+        'Z' | 'z' => &[
+            0x7E, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '0' => &[
+            0x3C, 0x66, 0x6E, 0x76, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '1' => &[
+            0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '2' => &[
+            0x3C, 0x66, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x7E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '3' => &[
+            0x3C, 0x66, 0x06, 0x1C, 0x06, 0x06, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '4' => &[
+            0x0C, 0x1C, 0x34, 0x64, 0x7E, 0x04, 0x04, 0x0E, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '5' => &[
+            0x7E, 0x60, 0x7C, 0x06, 0x06, 0x06, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '6' => &[
+            0x1C, 0x30, 0x60, 0x7C, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '7' => &[
+            0x7E, 0x06, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '8' => &[
+            0x3C, 0x66, 0x66, 0x3C, 0x66, 0x66, 0x66, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '9' => &[
+            0x3C, 0x66, 0x66, 0x3E, 0x06, 0x06, 0x0C, 0x38, 0x00, 0x00, 0x00, 0x00,
+        ],
+        ':' => &[
+            0x00, 0x18, 0x18, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '.' => &[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+        ],
+        ',' => &[
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x08, 0x10, 0x00, 0x00,
+        ],
+        '-' => &[
+            0x00, 0x00, 0x00, 0x7E, 0x7E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '+' => &[
+            0x00, 0x18, 0x18, 0x7E, 0x7E, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '%' => &[
+            0x62, 0x64, 0x08, 0x10, 0x20, 0x26, 0x46, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '[' => &[
+            0x3C, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        ']' => &[
+            0x3C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x3C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '(' => &[
+            0x0C, 0x18, 0x30, 0x30, 0x30, 0x30, 0x18, 0x0C, 0x00, 0x00, 0x00, 0x00,
+        ],
+        ')' => &[
+            0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x0C, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '/' => &[
+            0x02, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '\\' => &[
+            0x40, 0x60, 0x30, 0x18, 0x0C, 0x06, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '\'' => &[
+            0x18, 0x18, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '!' => &[
+            0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+        ],
+        '?' => &[
+            0x3C, 0x66, 0x06, 0x0C, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00,
+        ],
         _ => &[0x00; 12],
     }
 }
@@ -89,7 +190,11 @@ pub struct FramebufferContext<'a> {
 
 impl<'a> FramebufferContext<'a> {
     pub fn new(buffer: &'a mut [u8], width: usize, height: usize) -> Self {
-        Self { buffer, width, height }
+        Self {
+            buffer,
+            width,
+            height,
+        }
     }
 
     #[inline]
@@ -108,8 +213,10 @@ impl<'a> FramebufferContext<'a> {
             let a = sa as u32;
             let inv_a = 255 - a;
             self.buffer[idx] = ((sr as u32 * a + self.buffer[idx] as u32 * inv_a) / 255) as u8;
-            self.buffer[idx + 1] = ((sg as u32 * a + self.buffer[idx + 1] as u32 * inv_a) / 255) as u8;
-            self.buffer[idx + 2] = ((sb as u32 * a + self.buffer[idx + 2] as u32 * inv_a) / 255) as u8;
+            self.buffer[idx + 1] =
+                ((sg as u32 * a + self.buffer[idx + 1] as u32 * inv_a) / 255) as u8;
+            self.buffer[idx + 2] =
+                ((sb as u32 * a + self.buffer[idx + 2] as u32 * inv_a) / 255) as u8;
             self.buffer[idx + 3] = 255;
         }
     }
@@ -125,7 +232,9 @@ impl<'a> FramebufferContext<'a> {
     }
 
     pub fn stroke_rect(&mut self, x: usize, y: usize, w: usize, h: usize, color: (u8, u8, u8, u8)) {
-        if w == 0 || h == 0 { return; }
+        if w == 0 || h == 0 {
+            return;
+        }
         self.fill_rect(x, y, w, 1, color);
         self.fill_rect(x, y + h.saturating_sub(1), w, 1, color);
         self.fill_rect(x, y, 1, h, color);
@@ -136,10 +245,14 @@ impl<'a> FramebufferContext<'a> {
         let r2 = radius * radius;
         for dy in -radius..=radius {
             let py = cy + dy;
-            if py < 0 || py >= self.height as i32 { continue; }
+            if py < 0 || py >= self.height as i32 {
+                continue;
+            }
             for dx in -radius..=radius {
                 let px = cx + dx;
-                if px < 0 || px >= self.width as i32 { continue; }
+                if px < 0 || px >= self.width as i32 {
+                    continue;
+                }
                 if dx * dx + dy * dy <= r2 {
                     self.blend_pixel(px as usize, py as usize, color);
                 }
@@ -147,7 +260,14 @@ impl<'a> FramebufferContext<'a> {
         }
     }
 
-    pub fn draw_text(&mut self, text: &str, start_x: usize, start_y: usize, color: (u8, u8, u8, u8)) -> usize {
+    #[allow(clippy::needless_range_loop)]
+    pub fn draw_text(
+        &mut self,
+        text: &str,
+        start_x: usize,
+        start_y: usize,
+        color: (u8, u8, u8, u8),
+    ) -> usize {
         let mut cur_x = start_x;
         for ch in text.chars() {
             if ch == ' ' {
@@ -157,7 +277,9 @@ impl<'a> FramebufferContext<'a> {
             let bitmap = get_glyph_bitmap(ch);
             for row in 0..12 {
                 let py = start_y + row;
-                if py >= self.height { break; }
+                if py >= self.height {
+                    break;
+                }
                 let bits = bitmap[row];
                 for col in 0..8 {
                     if (bits & (0x80 >> col)) != 0 {
@@ -268,17 +390,18 @@ impl<'a> FramebufferContext<'a> {
         // Unread badge in Space Orange
         if unread_count > 0 {
             self.fill_circle((x + 11) as i32, (y + 3) as i32, 4, SPACE_ORANGE);
-            let count_str = if unread_count > 9 { "9+".to_string() } else { unread_count.to_string() };
+            let count_str = if unread_count > 9 {
+                "9+".to_string()
+            } else {
+                unread_count.to_string()
+            };
             self.draw_text(&count_str, x + 9, y + 1, (255, 255, 255, 255));
         }
     }
 }
 
 /// Renders the complete Top Global Menu Panel and real System Tray
-pub fn render_top_panel(
-    ctx: &mut FramebufferContext,
-    topbar: &TopGlobalMenuBar,
-) {
+pub fn render_top_panel(ctx: &mut FramebufferContext, topbar: &TopGlobalMenuBar) {
     let w = ctx.width;
     let h = 32usize;
 
@@ -294,7 +417,12 @@ pub fn render_top_panel(
 
     // 3. Focused App Title (e.g. "Filer") in bold white
     let mut cur_x = 52usize;
-    cur_x = ctx.draw_text(&topbar.focused_app.app_title, cur_x, 10, (255, 255, 255, 255));
+    cur_x = ctx.draw_text(
+        &topbar.focused_app.app_title,
+        cur_x,
+        10,
+        (255, 255, 255, 255),
+    );
     cur_x += 16;
 
     // 4. Global Menu Items ("File", "Edit", "View", "Go", "Window", "Help")
@@ -330,7 +458,7 @@ pub fn render_top_panel(
     tray_x = tray_x.saturating_sub(38);
 
     // Power Profile Badge: Space Orange [MAX], Sky Blue [BAL], Emerald Green [END]
-    let (prof_label, prof_col) = match topbar.power.profile {
+    let (prof_label, prof_col) = match topbar.power.active_profile {
         PowerProfile::Max => ("MAX", SPACE_ORANGE),
         PowerProfile::Balanced => ("BAL", SKY_BLUE),
         PowerProfile::Endurance => ("END", EMERALD_GREEN),
@@ -355,7 +483,12 @@ pub fn render_top_panel(
     tray_x = tray_x.saturating_sub(22);
 
     // 5e. Network Tray Widget (Wi-Fi bars / status)
-    ctx.draw_wifi_icon(tray_x, 10, topbar.network.signal_pct, topbar.network.is_connected);
+    ctx.draw_wifi_icon(
+        tray_x,
+        10,
+        topbar.network.signal_pct,
+        topbar.network.is_connected,
+    );
     tray_x = tray_x.saturating_sub(26);
 
     // 5f. StatusNotifierItem (SNI) App Icons (e.g. Zen Browser)
@@ -379,7 +512,7 @@ pub fn render_windows(
     traffic_lights: &TrafficLightGroup,
 ) {
     // If windows are registered in tiling manager, render their frames
-    if tiling.window_count() == 0 {
+    if tiling.windows.is_empty() {
         // Render default showcase window (e.g. Filer primary window)
         let win_x = (ctx.width.saturating_sub(1080)) / 2;
         let win_y = 56usize;
@@ -428,15 +561,17 @@ pub fn render_windows(
         let search_y = win_y + 60;
         ctx.fill_rect(search_x, search_y, search_w, 40, (18, 18, 22, 255));
         ctx.stroke_rect(search_x, search_y, search_w, 40, SPACE_ORANGE);
-        ctx.draw_text("Search files, apps, settings, or web...", search_x + 16, search_y + 14, (160, 160, 168, 255));
+        ctx.draw_text(
+            "Search files, apps, settings, or web...",
+            search_x + 16,
+            search_y + 14,
+            (160, 160, 168, 255),
+        );
     }
 }
 
 /// Renders Layer 5 Smart Dock at screen bottom
-pub fn render_smart_dock(
-    ctx: &mut FramebufferContext,
-    dock: &SmartDock,
-) {
+pub fn render_smart_dock(ctx: &mut FramebufferContext, dock: &SmartDock) {
     if !dock.is_visible() {
         return;
     }
@@ -462,21 +597,23 @@ pub fn render_smart_dock(
         ctx.stroke_rect(item_x, item_y, 44, 44, (70, 70, 84, 255));
 
         // App Initial or glyph
-        let initial = &entry.app_name[..1.min(entry.app_name.len())];
+        let initial = &entry.display_name[..1.min(entry.display_name.len())];
         ctx.draw_text(initial, item_x + 18, item_y + 16, (255, 255, 255, 255));
 
         // Running app indicator dot in Space Orange (#FF5500)
         if entry.is_running {
-            ctx.fill_circle((item_x + 22) as i32, (dock_y + dock_h - 6) as i32, 2, SPACE_ORANGE);
+            ctx.fill_circle(
+                (item_x + 22) as i32,
+                (dock_y + dock_h - 6) as i32,
+                2,
+                SPACE_ORANGE,
+            );
         }
     }
 }
 
 /// Renders Layer 8 Pop-up menus (System Menu dropdown)
-pub fn render_system_menu(
-    ctx: &mut FramebufferContext,
-    topbar: &TopGlobalMenuBar,
-) {
+pub fn render_system_menu(ctx: &mut FramebufferContext, topbar: &TopGlobalMenuBar) {
     if !topbar.system_menu_open {
         return;
     }
@@ -514,11 +651,8 @@ pub fn render_system_menu(
 }
 
 /// Renders Layer 9 Notification Banners
-pub fn render_notifications(
-    ctx: &mut FramebufferContext,
-    notifications: &NotificationCenter,
-) {
-    if notifications.is_empty() {
+pub fn render_notifications(ctx: &mut FramebufferContext, notifications: &NotificationCenter) {
+    if notifications.banners.is_empty() {
         return;
     }
 
@@ -533,18 +667,111 @@ pub fn render_notifications(
 
         // App Id / Title
         ctx.draw_text(&banner.app_id, banner_x + 12, banner_y + 10, SPACE_ORANGE);
-        ctx.draw_text(&banner.title, banner_x + 12, banner_y + 26, (255, 255, 255, 255));
-        ctx.draw_text(&banner.body, banner_x + 12, banner_y + 44, (180, 180, 188, 255));
+        ctx.draw_text(
+            &banner.title,
+            banner_x + 12,
+            banner_y + 26,
+            (255, 255, 255, 255),
+        );
+        ctx.draw_text(
+            &banner.body,
+            banner_x + 12,
+            banner_y + 44,
+            (180, 180, 188, 255),
+        );
 
         banner_y += banner_h + 10;
     }
 }
 
-/// Renders Layer 12 Shutdown / Restart Screens
-pub fn render_power_screen(
+/// Renders Layer 11 Error Dialog Surfaces (Week 8 Day 3 & Day 4)
+pub fn render_error_dialog(
     ctx: &mut FramebufferContext,
-    screen: &PowerScreenState,
+    dialog: &crate::error_dialog::ErrorDialogState,
 ) {
+    if !dialog.is_open {
+        return;
+    }
+    let dialog_w = 480usize;
+    let dialog_h = 280usize;
+    let x = (ctx.width.saturating_sub(dialog_w)) / 2;
+    let y = (ctx.height.saturating_sub(dialog_h)) / 2;
+
+    // Dim background overlay (scrim)
+    ctx.fill_rect(0, 0, ctx.width, ctx.height, (0, 0, 0, 160));
+
+    // Dialog card: Obsidian Slate with Space Orange accent line
+    ctx.fill_rect(x, y, dialog_w, dialog_h, (24, 24, 28, 255));
+    ctx.stroke_rect(x, y, dialog_w, dialog_h, (56, 56, 68, 255));
+    ctx.fill_rect(x, y, dialog_w, 2, SPACE_ORANGE);
+
+    // Title
+    ctx.draw_text(&dialog.error.title, x + 24, y + 20, SPACE_WHITE);
+
+    // Explanation
+    ctx.draw_text(
+        &dialog.error.explanation,
+        x + 24,
+        y + 54,
+        (200, 200, 205, 255),
+    );
+
+    // Suggestion
+    ctx.draw_text(
+        &dialog.error.suggestion,
+        x + 24,
+        y + 74,
+        (160, 160, 168, 255),
+    );
+
+    // Technical Details box (JetBrains Mono aesthetic)
+    ctx.fill_rect(x + 24, y + 104, dialog_w - 48, 80, (14, 14, 16, 255));
+    ctx.draw_text("Technical Detail:", x + 32, y + 114, (120, 120, 128, 255));
+    ctx.draw_text(
+        &dialog.error.technical_detail,
+        x + 32,
+        y + 134,
+        (180, 180, 185, 255),
+    );
+
+    // Action Buttons at bottom
+    // 1. Copy Details button
+    let copy_color = if dialog.copied_feedback_timer > 0.0 {
+        EMERALD_GREEN
+    } else if dialog.copy_button_hovered {
+        (255, 255, 255, 255)
+    } else {
+        (200, 200, 205, 255)
+    };
+    let copy_text = if dialog.copied_feedback_timer > 0.0 {
+        "Copied!"
+    } else {
+        "Copy Details"
+    };
+    ctx.fill_rect(x + 24, y + 210, 120, 36, (36, 36, 42, 255));
+    ctx.draw_text(copy_text, x + 34, y + 222, copy_color);
+
+    // 2. Report Issue button
+    let rep_bg = if dialog.report_button_hovered {
+        (255, 110, 30, 255)
+    } else {
+        SPACE_ORANGE
+    };
+    ctx.fill_rect(x + 160, y + 210, 140, 36, rep_bg);
+    ctx.draw_text("Report Issue", x + 172, y + 222, (255, 255, 255, 255));
+
+    // 3. Dismiss button
+    let dismiss_bg = if dialog.dismiss_button_hovered {
+        (64, 64, 76, 255)
+    } else {
+        (48, 48, 56, 255)
+    };
+    ctx.fill_rect(x + 316, y + 210, 140, 36, dismiss_bg);
+    ctx.draw_text("Dismiss", x + 360, y + 222, SPACE_WHITE);
+}
+
+/// Renders Layer 12 Shutdown / Restart Screens
+pub fn render_power_screen(ctx: &mut FramebufferContext, screen: &PowerScreenState) {
     // Pure black background (#000000)
     ctx.fill_rect(0, 0, ctx.width, ctx.height, (0, 0, 0, 255));
 
@@ -559,10 +786,7 @@ pub fn render_power_screen(
 }
 
 /// Renders First-Boot Setup Wizard Card
-pub fn render_setup_wizard(
-    ctx: &mut FramebufferContext,
-    wizard: &SetupWizardState,
-) {
+pub fn render_setup_wizard(ctx: &mut FramebufferContext, wizard: &SetupWizardState) {
     // Dim background scrim
     ctx.fill_rect(0, 0, ctx.width, ctx.height, (12, 12, 14, 240));
 
@@ -597,4 +821,123 @@ pub fn render_setup_wizard(
     let btn_y = cy + card_h - btn_h - 32;
     ctx.fill_rect(btn_x, btn_y, btn_w, btn_h, SPACE_ORANGE);
     ctx.draw_text("Continue", btn_x + 28, btn_y + 12, (255, 255, 255, 255));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::topbar::TopGlobalMenuBar;
+
+    #[test]
+    fn test_top_panel_and_system_tray_rendering() {
+        let width = 1920;
+        let height = 1080;
+        let mut fb = vec![0u8; width * height * 4];
+        let mut ctx = FramebufferContext::new(&mut fb, width, height);
+
+        let topbar = TopGlobalMenuBar::new();
+        render_top_panel(&mut ctx, &topbar);
+
+        // Verify Identity mark is Space Orange (#FF5500)
+        let id_idx = (10 * width + 15) * 4;
+        assert_eq!(ctx.buffer[id_idx], 255); // R
+        assert_eq!(ctx.buffer[id_idx + 1], 85); // G
+        assert_eq!(ctx.buffer[id_idx + 2], 0); // B
+        assert_eq!(ctx.buffer[id_idx + 3], 255); // A
+
+        // Verify Top panel bottom border is drawn
+        let border_idx = (31 * width + 100) * 4;
+        assert_eq!(ctx.buffer[border_idx + 3], 255);
+
+        // Verify non-zero pixels exist in the System Tray region (right side)
+        let mut tray_has_pixels = false;
+        for x in (width - 300)..width {
+            let idx = (12 * width + x) * 4;
+            if ctx.buffer[idx] > 0 || ctx.buffer[idx + 1] > 0 || ctx.buffer[idx + 2] > 0 {
+                tray_has_pixels = true;
+                break;
+            }
+        }
+        assert!(
+            tray_has_pixels,
+            "System tray must render visible widgets on top right"
+        );
+    }
+
+    #[test]
+    fn test_window_chrome_and_traffic_lights_rendering() {
+        let width = 1280;
+        let height = 800;
+        let mut fb = vec![0u8; width * height * 4];
+        let mut ctx = FramebufferContext::new(&mut fb, width, height);
+
+        let tiling = TilingWindowManager::new(1280, 800);
+        let mut traffic_lights = TrafficLightGroup::new();
+        traffic_lights.set_hover(true);
+
+        render_windows(&mut ctx, &tiling, &traffic_lights);
+
+        // Verify window rendered: traffic light close button exists in Space Orange
+        let win_x = (width.saturating_sub(1080)) / 2;
+        let win_y = 56;
+        let tl_close_idx = ((win_y + 18) * width + (win_x + 20)) * 4;
+        assert_eq!(ctx.buffer[tl_close_idx], 255);
+        assert_eq!(ctx.buffer[tl_close_idx + 1], 85);
+        assert_eq!(ctx.buffer[tl_close_idx + 2], 0);
+    }
+
+    #[test]
+    fn test_power_screen_rendering() {
+        let width = 800;
+        let height = 600;
+        let mut fb = vec![100u8; width * height * 4];
+        let mut ctx = FramebufferContext::new(&mut fb, width, height);
+
+        let mut ps = PowerScreenState::new(crate::shutdown_ui::PowerScreenType::Shutdown);
+        ps.set_progress(1.0);
+
+        render_power_screen(&mut ctx, &ps);
+
+        // Verify background is pure black
+        assert_eq!(ctx.buffer[0], 0);
+        assert_eq!(ctx.buffer[1], 0);
+        assert_eq!(ctx.buffer[2], 0);
+        assert_eq!(ctx.buffer[3], 255);
+
+        // Verify center has text rendered
+        let mut found_text = false;
+        for dx in 0..100 {
+            let idx = (300 * width + (width / 2 - 50 + dx)) * 4;
+            if ctx.buffer[idx] > 0 {
+                found_text = true;
+                break;
+            }
+        }
+        assert!(
+            found_text,
+            "Shutdown text 'goodbye' should render in center"
+        );
+    }
+
+    #[test]
+    fn test_error_dialog_rendering() {
+        let width = 1024;
+        let height = 768;
+        let mut fb = vec![0u8; width * height * 4];
+        let mut ctx = FramebufferContext::new(&mut fb, width, height);
+
+        let dialog = crate::error_dialog::ErrorDialogState::from_raw("EACCES: permission denied");
+        render_error_dialog(&mut ctx, &dialog);
+
+        // Verify scrim overlay applied (destination alpha remains 255)
+        assert_eq!(ctx.buffer[3], 255);
+
+        // Verify card rendered: center region has technical details box (14, 14, 16)
+        let cx = width / 2;
+        let cy = height / 2;
+        let center_idx = (cy * width + cx) * 4;
+        assert_eq!(ctx.buffer[center_idx], 14);
+        assert_eq!(ctx.buffer[center_idx + 1], 14);
+        assert_eq!(ctx.buffer[center_idx + 2], 16);
+    }
 }

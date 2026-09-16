@@ -12,11 +12,11 @@
 //!
 //! Hard rule: Never owns rendered UI. Never exposes credentials to Process 2.
 
-use amgos_protocol::ebus::{
-    AstrophageLevel, DesktopRequest, ProtocolFileEntry, SystemEvent,
-};
+use amgos_protocol::ebus::{AstrophageLevel, DesktopRequest, ProtocolFileEntry, SystemEvent};
+use amgos_system::ab_system::AbUpdateManager;
 use amgos_system::astrophage::AstrophageCoreLogger;
 use amgos_system::avm::{self, AudioVideoManager};
+use amgos_system::bluetooth::BluetoothManager;
 use amgos_system::ebus::{EventBusServer, DEFAULT_EBUS_SOCKET_PATH};
 use amgos_system::eobus::EventOutsiderBusBridge;
 use amgos_system::hardware::{self, detect_hardware};
@@ -25,7 +25,9 @@ use amgos_system::network::NetworkCredentialVault;
 use amgos_system::permissions::PermissionManager;
 use amgos_system::power::PowerManager;
 use amgos_system::supervisor::ServiceSupervisor;
-use filer_core::{AppLayerManager, DownloadManager, FileSystemIndexer, PackageInspector, PathfinderIndex};
+use filer_core::{
+    AppLayerManager, DownloadManager, FileSystemIndexer, PackageInspector, PathfinderIndex,
+};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -57,7 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     astrophage.log(
         AstrophageLevel::Info,
         "hardware",
-        &format!("CPU: {} ({} cores)", hw_profile.cpu_model, hw_profile.cpu_cores),
+        &format!(
+            "CPU: {} ({} cores)",
+            hw_profile.cpu_model, hw_profile.cpu_cores
+        ),
         Some(("cpu_cores", hw_profile.cpu_cores as f64)),
     );
 
@@ -65,12 +70,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let avm = Arc::new(AudioVideoManager::new());
     avm.mark_audio_hardware_ready();
 
-    // 4. Network Vault & Power Manager & Permission Manager & MotionWave & eo-bus Bridge
+    // 4. Network Vault & Power Manager & Permission Manager & MotionWave & eo-bus Bridge & Bluetooth & A/B Manager
     let network = Arc::new(NetworkCredentialVault::new());
     let power = Arc::new(PowerManager::new());
     let permissions = Arc::new(PermissionManager::new());
     let motionwave = Arc::new(MotionWaveController::new());
     let eobus = Arc::new(EventOutsiderBusBridge::new());
+    let bluetooth = Arc::new(BluetoothManager::new());
+    let ab_manager = Arc::new(AbUpdateManager::new());
+    ab_manager.mark_boot_successful();
 
     // 5. Filer Core: Pathfinder Index, App Layer Manager, and Download Manager
     let pathfinder = Arc::new(Mutex::new(PathfinderIndex::new()));
@@ -135,7 +143,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         astrophage.log(
             AstrophageLevel::Info,
             "avm",
-            &format!("Chime Sequencer triggered: Note {} ({:.2} Hz)", chime.note, chime.frequency_hz),
+            &format!(
+                "Chime Sequencer triggered: Note {} ({:.2} Hz)",
+                chime.note, chime.frequency_hz
+            ),
             None,
         );
         let _ = avm.play_boot_chime_hardware();
@@ -156,7 +167,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 9. Main request dispatch loop with real POSIX SIGINT/SIGTERM handlers
     install_signal_handlers();
-    astrophage.log(AstrophageLevel::Info, "system", "Process 1 operational. Awaiting Process 2 requests.", None);
+    astrophage.log(
+        AstrophageLevel::Info,
+        "system",
+        "Process 1 operational. Awaiting Process 2 requests.",
+        None,
+    );
 
     while RUNNING_SIGNAL.load(Ordering::SeqCst) {
         thread::sleep(Duration::from_millis(20));
@@ -174,10 +190,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let idx = pathfinder.lock().unwrap();
                         idx.query(&query, max_results)
                     };
-                    let _ = ebus_server.publish_event(&SystemEvent::PathfinderResults {
-                        query_id,
-                        results,
-                    });
+                    let _ = ebus_server
+                        .publish_event(&SystemEvent::PathfinderResults { query_id, results });
                 }
 
                 DesktopRequest::ListDirectory { request_id, path } => {
@@ -246,20 +260,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }) {
                         Ok(app_id) => {
                             // Register installed app into Pathfinder
-                            let _ = ebus_server.publish_event(&SystemEvent::PackageInstallFinished {
-                                package_path,
-                                app_id,
-                                success: true,
-                                error_message: None,
-                            });
+                            let _ =
+                                ebus_server.publish_event(&SystemEvent::PackageInstallFinished {
+                                    package_path,
+                                    app_id,
+                                    success: true,
+                                    error_message: None,
+                                });
                         }
                         Err(err) => {
-                            let _ = ebus_server.publish_event(&SystemEvent::PackageInstallFinished {
-                                package_path,
-                                app_id: String::new(),
-                                success: false,
-                                error_message: Some(err.to_string()),
-                            });
+                            let _ =
+                                ebus_server.publish_event(&SystemEvent::PackageInstallFinished {
+                                    package_path,
+                                    app_id: String::new(),
+                                    success: false,
+                                    error_message: Some(err.to_string()),
+                                });
                         }
                     }
                 }
@@ -274,40 +290,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 idx.remove_entry(&app_id);
                             }
 
-                            let _ = ebus_server.publish_event(&SystemEvent::PackageUninstallFinished {
-                                app_id,
-                                success: true,
-                                error_message: None,
-                            });
+                            let _ =
+                                ebus_server.publish_event(&SystemEvent::PackageUninstallFinished {
+                                    app_id,
+                                    success: true,
+                                    error_message: None,
+                                });
                         }
                         Err(err) => {
-                            let _ = ebus_server.publish_event(&SystemEvent::PackageUninstallFinished {
-                                app_id,
-                                success: false,
-                                error_message: Some(err.to_string()),
-                            });
+                            let _ =
+                                ebus_server.publish_event(&SystemEvent::PackageUninstallFinished {
+                                    app_id,
+                                    success: false,
+                                    error_message: Some(err.to_string()),
+                                });
                         }
                     }
                 }
 
-                DesktopRequest::SetPowerProfile(profile) => {
-                    match power.set_profile(profile) {
-                        Ok(governor) => {
-                            let _ = ebus_server.publish_event(&SystemEvent::PowerProfileChanged {
-                                profile,
-                                active_governor: governor,
-                            });
-                        }
-                        Err(err) => {
-                            astrophage.log(
-                                AstrophageLevel::Error,
-                                "power",
-                                &format!("Failed to switch power profile: {err}"),
-                                None,
-                            );
-                        }
+                DesktopRequest::SetPowerProfile(profile) => match power.set_profile(profile) {
+                    Ok(governor) => {
+                        let _ = ebus_server.publish_event(&SystemEvent::PowerProfileChanged {
+                            profile,
+                            active_governor: governor,
+                        });
                     }
-                }
+                    Err(err) => {
+                        astrophage.log(
+                            AstrophageLevel::Error,
+                            "power",
+                            &format!("Failed to switch power profile: {err}"),
+                            None,
+                        );
+                    }
+                },
 
                 DesktopRequest::RequestPowerState(target) => {
                     let _ = power.transition_to(target);
@@ -329,9 +345,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 DesktopRequest::GetAstrophageBuffer { max_entries } => {
                     let entries = astrophage.snapshot(max_entries);
-                    let _ = ebus_server.publish_event(&SystemEvent::AstrophageBufferSnapshot {
-                        entries,
-                    });
+                    let _ = ebus_server
+                        .publish_event(&SystemEvent::AstrophageBufferSnapshot { entries });
                 }
 
                 DesktopRequest::ApplySignedConfig {
@@ -343,7 +358,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 DesktopRequest::GetInputDevices => {
                     let devices = motionwave.enumerate_devices().unwrap_or_default();
-                    let _ = ebus_server.publish_event(&SystemEvent::InputDevicesChanged { devices });
+                    let _ =
+                        ebus_server.publish_event(&SystemEvent::InputDevicesChanged { devices });
                 }
 
                 DesktopRequest::SetTouchpadConfig(config) => {
@@ -439,11 +455,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let _ = network.connect(ssid_str, &passphrase);
                             }
 
-                            let _ = ebus_server.publish_event(&SystemEvent::FirstBootConfigApplied {
-                                user_name: cfg.user_name,
-                                locale: cfg.locale,
-                                ui_scale_factor: cfg.ui_scale_factor,
-                            });
+                            let _ =
+                                ebus_server.publish_event(&SystemEvent::FirstBootConfigApplied {
+                                    user_name: cfg.user_name,
+                                    locale: cfg.locale,
+                                    ui_scale_factor: cfg.ui_scale_factor,
+                                });
                         }
                         Err(err) => {
                             astrophage.log(
@@ -455,6 +472,73 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+
+                DesktopRequest::SetBluetoothPower(power_on) => {
+                    let _ = bluetooth.set_power(power_on);
+                    let _ = ebus_server.publish_event(&SystemEvent::BluetoothStatusChanged {
+                        powered: bluetooth.is_powered(),
+                        discovering: bluetooth.is_discovering(),
+                        devices: bluetooth.get_sanitized_devices(),
+                    });
+                }
+
+                DesktopRequest::StartBluetoothScan => {
+                    let _ = bluetooth.start_scan();
+                    let _ = ebus_server.publish_event(&SystemEvent::BluetoothStatusChanged {
+                        powered: bluetooth.is_powered(),
+                        discovering: bluetooth.is_discovering(),
+                        devices: bluetooth.get_sanitized_devices(),
+                    });
+                }
+
+                DesktopRequest::StopBluetoothScan => {
+                    let _ = bluetooth.stop_scan();
+                    let _ = ebus_server.publish_event(&SystemEvent::BluetoothStatusChanged {
+                        powered: bluetooth.is_powered(),
+                        discovering: bluetooth.is_discovering(),
+                        devices: bluetooth.get_sanitized_devices(),
+                    });
+                }
+
+                DesktopRequest::ConnectBluetoothDevice { address } => {
+                    let _ = bluetooth.connect_device(&address);
+                    let _ = ebus_server.publish_event(&SystemEvent::BluetoothStatusChanged {
+                        powered: bluetooth.is_powered(),
+                        discovering: bluetooth.is_discovering(),
+                        devices: bluetooth.get_sanitized_devices(),
+                    });
+                }
+
+                DesktopRequest::DisconnectBluetoothDevice { address } => {
+                    let _ = bluetooth.disconnect_device(&address);
+                    let _ = ebus_server.publish_event(&SystemEvent::BluetoothStatusChanged {
+                        powered: bluetooth.is_powered(),
+                        discovering: bluetooth.is_discovering(),
+                        devices: bluetooth.get_sanitized_devices(),
+                    });
+                }
+
+                DesktopRequest::GetAbSlotStatus => {
+                    let status = ab_manager.get_status();
+                    let _ = ebus_server.publish_event(&SystemEvent::AbSlotStatusChanged(status));
+                }
+
+                DesktopRequest::ApplyOtaUpdate {
+                    image_path,
+                    expected_sha256,
+                } => {
+                    let ab_mgr = Arc::clone(&ab_manager);
+                    let ebus_clone = Arc::clone(&ebus_server);
+                    let path = std::path::PathBuf::from(image_path);
+                    thread::spawn(move || {
+                        let res = ab_mgr.stage_update(&path, &expected_sha256, "0.0.2");
+                        let status = ab_mgr.get_status();
+                        let _ = ebus_clone.publish_event(&SystemEvent::AbSlotStatusChanged(status));
+                        if let Err(e) = res {
+                            eprintln!("OTA stage update failed: {e}");
+                        }
+                    });
+                }
             }
         }
 
@@ -464,36 +548,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 use filer_core::downloads::DownloadStatus;
                 let (bytes_received, total_bytes, percent, proto_status) = match &status {
                     DownloadStatus::Connecting => (
-                        0, 0, 0.0,
+                        0,
+                        0,
+                        0.0,
                         amgos_protocol::ebus::DownloadJobStatus::Connecting,
                     ),
-                    DownloadStatus::Downloading { bytes_received, total_bytes } => {
+                    DownloadStatus::Downloading {
+                        bytes_received,
+                        total_bytes,
+                    } => {
                         let pct = if *total_bytes > 0 {
                             (*bytes_received as f32 / *total_bytes as f32) * 100.0
                         } else {
                             0.0
                         };
-                        (*bytes_received, *total_bytes, pct,
-                         amgos_protocol::ebus::DownloadJobStatus::Downloading)
+                        (
+                            *bytes_received,
+                            *total_bytes,
+                            pct,
+                            amgos_protocol::ebus::DownloadJobStatus::Downloading,
+                        )
                     }
                     DownloadStatus::Completed { .. } => (
-                        0, 0, 100.0,
+                        0,
+                        0,
+                        100.0,
                         amgos_protocol::ebus::DownloadJobStatus::Completed,
                     ),
-                    DownloadStatus::Failed { .. } => (
-                        0, 0, 0.0,
-                        amgos_protocol::ebus::DownloadJobStatus::Failed,
-                    ),
-                    _ => (
-                        0, 0, 0.0,
-                        amgos_protocol::ebus::DownloadJobStatus::Queued,
-                    ),
+                    DownloadStatus::Failed { .. } => {
+                        (0, 0, 0.0, amgos_protocol::ebus::DownloadJobStatus::Failed)
+                    }
+                    _ => (0, 0, 0.0, amgos_protocol::ebus::DownloadJobStatus::Queued),
                 };
 
                 let jobs_guard = download_manager.active_jobs();
                 let url = jobs_guard
-                    .iter()
-                    .next()
+                    .first()
                     .map(|_| String::new())
                     .unwrap_or_default();
 
@@ -511,7 +601,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     supervisor.shutdown();
     ebus_server.shutdown();
-    astrophage.log(AstrophageLevel::Info, "system", "Process 1 shutdown complete.", None);
+    astrophage.log(
+        AstrophageLevel::Info,
+        "system",
+        "Process 1 shutdown complete.",
+        None,
+    );
     Ok(())
 }
 

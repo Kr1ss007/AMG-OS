@@ -97,13 +97,9 @@ impl NotificationBanner {
     /// Returns current horizontal slide offset [0.0 = onscreen, 1.0 = off right edge]
     pub fn slide_offset(&self) -> f64 {
         match self.state {
-            BannerState::Entering => {
-                1.0 - curves::DECELERATE.solve(self.animation_progress)
-            }
+            BannerState::Entering => 1.0 - curves::DECELERATE.solve(self.animation_progress),
             BannerState::Visible => 0.0,
-            BannerState::Exiting => {
-                curves::ACCELERATE.solve(1.0 - self.animation_progress)
-            }
+            BannerState::Exiting => curves::ACCELERATE.solve(1.0 - self.animation_progress),
             BannerState::Dismissed => 1.0,
         }
     }
@@ -138,7 +134,8 @@ impl NotificationCenter {
         urgency: u8,
     ) {
         // Replace existing notification with same ID (NM replaces)
-        self.banners.retain(|b| b.notification_id != notification_id);
+        self.banners
+            .retain(|b| b.notification_id != notification_id);
 
         let banner = NotificationBanner::new(
             notification_id,
@@ -154,11 +151,10 @@ impl NotificationCenter {
         // If over max_visible, begin dismissing the oldest low/normal urgency banner.
         // Only mark ONE per push — tick() will remove fully-dismissed banners each frame.
         if self.banners.len() > self.max_visible {
-            let dismiss_pos = self
-                .banners
-                .iter()
-                .rposition(|b| b.urgency != NotificationUrgency::Critical
-                    && !matches!(b.state, BannerState::Exiting | BannerState::Dismissed));
+            let dismiss_pos = self.banners.iter().rposition(|b| {
+                b.urgency != NotificationUrgency::Critical
+                    && !matches!(b.state, BannerState::Exiting | BannerState::Dismissed)
+            });
 
             if let Some(pos) = dismiss_pos {
                 if let Some(b) = self.banners.get_mut(pos) {
@@ -228,10 +224,7 @@ impl NotificationCenter {
     }
 
     pub fn active_count(&self) -> usize {
-        self.banners
-            .iter()
-            .filter(|b| !b.is_dismissed())
-            .count()
+        self.banners.iter().filter(|b| !b.is_dismissed()).count()
     }
 }
 
@@ -298,9 +291,7 @@ mod tests {
 
     #[test]
     fn test_slide_offset_entering() {
-        let banner = NotificationBanner::new(
-            1, "app", "Test", "Body", NotificationUrgency::Normal,
-        );
+        let banner = NotificationBanner::new(1, "app", "Test", "Body", NotificationUrgency::Normal);
         // At start (progress=0.0), should be fully offscreen
         let offset = banner.slide_offset();
         assert!(offset > 0.9);

@@ -39,7 +39,12 @@ pub struct WindowRect {
 
 impl WindowRect {
     pub fn new(x: i32, y: i32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 }
 
@@ -54,12 +59,7 @@ pub struct TileAnimation {
 }
 
 impl TileAnimation {
-    pub fn new(
-        window_id: u64,
-        from: WindowRect,
-        to: WindowRect,
-        target: TileState,
-    ) -> Self {
+    pub fn new(window_id: u64, from: WindowRect, to: WindowRect, target: TileState) -> Self {
         Self {
             window_id,
             from_rect: from,
@@ -203,7 +203,11 @@ impl TilingWindowManager {
         for anim in self.animations.iter_mut() {
             let rect = anim.tick(delta_t);
             // Update the window's current_rect in our records
-            if let Some(record) = self.windows.iter_mut().find(|w| w.window_id == anim.window_id) {
+            if let Some(record) = self
+                .windows
+                .iter_mut()
+                .find(|w| w.window_id == anim.window_id)
+            {
                 record.current_rect = rect;
             }
             updates.push((anim.window_id, rect));

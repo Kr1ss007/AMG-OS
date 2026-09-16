@@ -9,6 +9,8 @@
 //!   until Process 1 confirms hardware and audio readiness (SPEC Section 4.1).
 //! - Boot chime synchronization: First presentation synchronized with F3 piano chime.
 
+pub mod render;
+
 use crate::traffic_lights::TrafficLightGroup;
 use amgos_protocol::ebus::SystemEvent;
 use serde::{Deserialize, Serialize};
@@ -139,15 +141,17 @@ impl CompositorBridge {
     }
 
     /// Composite all layered UI surfaces according to AMGOS SPEC Section 6
+    #[allow(clippy::too_many_arguments)]
     pub fn render_frame(
         &mut self,
         topbar: &crate::topbar::TopGlobalMenuBar,
         dock: &crate::smart_dock::SmartDock,
         pilot_control: &crate::pilot_control::PilotControl,
-        _tiling: &crate::tiling::TilingWindowManager,
-        _notifications: &crate::notifications::NotificationCenter,
-        _wizard: Option<&crate::wizard::SetupWizardState>,
-        _power_screen: Option<&crate::shutdown_ui::PowerScreenState>,
+        tiling: &crate::tiling::TilingWindowManager,
+        notifications: &crate::notifications::NotificationCenter,
+        wizard: Option<&crate::wizard::SetupWizardState>,
+        power_screen: Option<&crate::shutdown_ui::PowerScreenState>,
+        error_dialog: Option<&crate::error_dialog::ErrorDialogState>,
     ) {
         let w = self.geometry.width as usize;
         let h = self.geometry.height as usize;
@@ -156,66 +160,46 @@ impl CompositorBridge {
             self.framebuffer = vec![0u8; total];
         }
 
-        // Layer 0: Obsidian Deep Canvas background (#0c0c0e)
-        for chunk in self.framebuffer.chunks_exact_mut(4) {
-            chunk[0] = 12;
-            chunk[1] = 12;
-            chunk[2] = 14;
-            chunk[3] = 255;
+        let mut ctx = render::FramebufferContext::new(&mut self.framebuffer, w, h);
+
+        // Layer 12: If shutdown/restart screen is active, it takes over the entire display
+        if let Some(ps) = power_screen {
+            render::render_power_screen(&mut ctx, ps);
+            return;
         }
+
+        // Layer 12: If Setup Wizard is active (first boot)
+        if let Some(wiz) = wizard {
+            render::render_setup_wizard(&mut ctx, wiz);
+            return;
+        }
+
+        // Layer 0: Obsidian Deep Canvas background (#0c0c0e)
+        ctx.fill_rect(0, 0, w, h, (12, 12, 14, 255));
+
+        // Layer 1..4: Application Windows with window chrome & traffic lights
+        render::render_windows(&mut ctx, tiling, &self.traffic_lights);
 
         // Layer 5: Smart Dock at bottom
-        if dock.is_visible() {
-            let dock_h = 64usize;
-            let dock_y = h.saturating_sub(dock_h + 16);
-            let dock_w = (dock.entries.len() * 56 + 32).min(w);
-            let dock_x = (w.saturating_sub(dock_w)) / 2;
+        render::render_smart_dock(&mut ctx, dock);
 
-            for dy in 0..dock_h {
-                let py = dock_y + dy;
-                if py >= h { break; }
-                for dx in 0..dock_w {
-                    let px = dock_x + dx;
-                    if px >= w { break; }
-                    let idx = (py * w + px) * 4;
-                    // Dark titanium glass dock background
-                    self.framebuffer[idx] = 24;
-                    self.framebuffer[idx + 1] = 24;
-                    self.framebuffer[idx + 2] = 28;
-                    self.framebuffer[idx + 3] = 230;
-                }
-            }
-        }
+        // Layer 6 & 7: Top Global Menu Panel & Real System Tray
+        render::render_top_panel(&mut ctx, topbar);
 
-        // Layer 6 & 7: Top Global Menu Panel (full width, fixed, 32px height)
-        let topbar_h = 32usize;
-        for y in 0..topbar_h.min(h) {
-            for x in 0..w {
-                let idx = (y * w + x) * 4;
-                // Dark glass panel (#161618)
-                self.framebuffer[idx] = 22;
-                self.framebuffer[idx + 1] = 22;
-                self.framebuffer[idx + 2] = 24;
-                self.framebuffer[idx + 3] = 255;
-            }
-        }
+        // Layer 8: Pop-up menus (e.g. system menu dropdown)
+        render::render_system_menu(&mut ctx, topbar);
 
-        // Top Left: Space Orange sharp rectangle (#FF5500, 36x24px, no rounded corners)
-        let box_w = topbar.identity_mark.width_px as usize;
-        let box_h = topbar.identity_mark.height_px as usize;
-        for y in 4..(4 + box_h).min(h) {
-            for x in 8..(8 + box_w).min(w) {
-                let idx = (y * w + x) * 4;
-                self.framebuffer[idx] = 255;
-                self.framebuffer[idx + 1] = 85;
-                self.framebuffer[idx + 2] = 0;
-                self.framebuffer[idx + 3] = 255;
-            }
-        }
+        // Layer 9: Notifications
+        render::render_notifications(&mut ctx, notifications);
 
         // Layer 10: Pilot Control overlay (if active or animating)
         if pilot_control.is_visible() {
-            pilot_control.render_overlay(self.geometry.width, self.geometry.height, &mut self.framebuffer);
+            pilot_control.render_overlay(self.geometry.width, self.geometry.height, ctx.buffer);
+        }
+
+        // Layer 11: Error Dialog Surface
+        if let Some(err_dlg) = error_dialog {
+            render::render_error_dialog(&mut ctx, err_dlg);
         }
     }
 

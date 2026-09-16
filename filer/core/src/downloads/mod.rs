@@ -28,10 +28,17 @@ pub const DOWNLOAD_TIMEOUT_SECS: u64 = 300; // 5 minutes hard limit
 pub enum DownloadStatus {
     Queued,
     Connecting,
-    Downloading { bytes_received: u64, total_bytes: u64 },
+    Downloading {
+        bytes_received: u64,
+        total_bytes: u64,
+    },
     Verifying,
-    Completed { staged_path: PathBuf },
-    Failed { reason: String },
+    Completed {
+        staged_path: PathBuf,
+    },
+    Failed {
+        reason: String,
+    },
     Cancelled,
 }
 
@@ -80,7 +87,7 @@ impl DownloadManager {
     /// Derive a safe local filename from a URL
     fn filename_from_url(url: &str) -> String {
         url.split('/')
-            .last()
+            .next_back()
             .filter(|s| !s.is_empty())
             .unwrap_or("package")
             .to_string()
@@ -121,9 +128,7 @@ impl DownloadManager {
             .arg("--max-time")
             .arg(DOWNLOAD_TIMEOUT_SECS.to_string())
             .arg("--write-out")
-            .arg(format!(
-                "%{{size_download}} %{{size_header}} %{{http_code}}\n"
-            ))
+            .arg("%{size_download} %{size_header} %{http_code}\n")
             .arg("--output")
             .arg(&dest_path)
             .arg(url)
@@ -184,12 +189,12 @@ impl DownloadManager {
                     // Process exited — determine success or failure
                     if exit_status.success() && dest_path.exists() {
                         let staged = dest_path.clone();
-                        let size = fs::metadata(&staged)
-                            .map(|m| m.len())
-                            .unwrap_or(0);
+                        let size = fs::metadata(&staged).map(|m| m.len()).unwrap_or(0);
                         job.child_process = None;
                         job.status = if size > 0 {
-                            DownloadStatus::Completed { staged_path: staged }
+                            DownloadStatus::Completed {
+                                staged_path: staged,
+                            }
                         } else {
                             DownloadStatus::Failed {
                                 reason: "Downloaded file is empty".to_string(),
@@ -205,17 +210,13 @@ impl DownloadManager {
                 }
                 Ok(None) => {
                     // Still running — measure progress via file size growth
-                    let bytes_received = fs::metadata(&dest_path)
-                        .map(|m| m.len())
-                        .unwrap_or(0);
+                    let bytes_received = fs::metadata(&dest_path).map(|m| m.len()).unwrap_or(0);
 
                     // Try to get Content-Length from the sidecar HTTP response header file.
                     // In practice, curl writes the final write-out to stdout only when done.
                     // Use a conservative estimate: if file exists and growing, report progress.
-                    let total_bytes = read_content_length_from_sidecar(
-                        &self.staging_dir,
-                        job_id,
-                    ).unwrap_or(0);
+                    let total_bytes =
+                        read_content_length_from_sidecar(&self.staging_dir, job_id).unwrap_or(0);
 
                     job.status = DownloadStatus::Downloading {
                         bytes_received,
